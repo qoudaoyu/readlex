@@ -27,6 +27,9 @@ data class AppSettings(
     val storyTopic: String = STORY_TOPICS.first(),
     /** Day (epoch day) the last automatic story was generated. */
     val lastAutoStoryDay: Long = 0,
+    /** Daily reminder to review/read, at [reminderMinuteOfDay] local time. */
+    val reminderEnabled: Boolean = false,
+    val reminderMinuteOfDay: Int = 20 * 60,
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
 
@@ -64,6 +67,8 @@ class SettingsStore(context: Context) {
             autoStory = prefs.getBoolean("autoStory", d.autoStory),
             storyTopic = prefs.getString("storyTopic", d.storyTopic)!!,
             lastAutoStoryDay = prefs.getLong("lastAutoStoryDay", 0),
+            reminderEnabled = prefs.getBoolean("reminderEnabled", d.reminderEnabled),
+            reminderMinuteOfDay = prefs.getInt("reminderMinuteOfDay", d.reminderMinuteOfDay),
         )
     }
 
@@ -83,6 +88,8 @@ class SettingsStore(context: Context) {
             .putBoolean("autoStory", s.autoStory)
             .putString("storyTopic", s.storyTopic)
             .putLong("lastAutoStoryDay", s.lastAutoStoryDay)
+            .putBoolean("reminderEnabled", s.reminderEnabled)
+            .putInt("reminderMinuteOfDay", s.reminderMinuteOfDay)
             .apply()
         _settings.value = s
     }

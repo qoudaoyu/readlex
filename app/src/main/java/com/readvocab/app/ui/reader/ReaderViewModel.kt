@@ -143,6 +143,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
 
     /** Called as the user scrolls: paragraphs before [lastFullyRead] (inclusive) have been read. */
     fun onRead(lastFullyRead: Int, firstVisible: Int) {
+        touch()
         if (lastFullyRead > seenUpTo) seenUpTo = lastFullyRead
         // Commit in batches so reviews happen as you read, not only when leaving.
         if (seenUpTo - committedUpTo >= 6) viewModelScope.launch { commitNow() }
@@ -151,7 +152,22 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
 
     private var progressParagraph = 0
 
+    /**
+     * Active reading time: the gaps between interactions (scrolling, tapping, selecting), each capped
+     * so that leaving the phone on the table does not count.
+     */
+    private var lastActivity = 0L
+    private var pendingMs = 0L
+
+    private fun touch() {
+        val now = System.currentTimeMillis()
+        if (lastActivity > 0) pendingMs += (now - lastActivity).coerceIn(0, MAX_IDLE_GAP_MS)
+        lastActivity = now
+    }
+
     fun onPause() {
+        touch()
+        lastActivity = 0
         val s = _state.value
         appScope.launch {
             commitNow()
@@ -167,8 +183,14 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         val s = _state.value
         val from = committedUpTo + 1
         val to = minOf(seenUpTo, s.paragraphs.size - 1)
-        if (to < from) return
+        val seconds = pendingMs / 1000
+        pendingMs -= seconds * 1000
+        if (to < from) {
+            c.stats.addReading(0, seconds)
+            return
+        }
         committedUpTo = to
+        c.stats.addReading((from..to).sumOf { s.paragraphs[it].tokens.size }, seconds)
         val st = statuses.value
         val settings = c.settings.current
         val passed = LinkedHashMap<String, PassedWord>()
@@ -199,6 +221,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         para.tokens.firstOrNull { offset >= it.start && offset < it.end } ?: para.tokens.firstOrNull { offset == it.end }
 
     fun onTap(paraIndex: Int, offset: Int) {
+        touch()
         if (_selection.value != null) { _selection.value = null; return }
         val para = _state.value.paragraphs.getOrNull(paraIndex) ?: return
         val token = findToken(para, offset) ?: return
@@ -271,6 +294,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
 
     /** Long press: select the sentence under the finger. */
     fun startSelection(paraIndex: Int, offset: Int) {
+        touch()
         val p = posAt(paraIndex, offset) ?: return
         _selection.value = Selection(p, p)
     }
@@ -343,6 +367,8 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
     companion object {
         /** In a review story, a target word read 12+ hours after its last review counts even if not due. */
         private const val STORY_EARLY_REVIEW_MS = 12 * 60 * 60 * 1000L
+        /** Longest pause between interactions that still counts as reading (a long paragraph). */
+        private const val MAX_IDLE_GAP_MS = 2 * 60 * 1000L
 
         /** Outlives the ViewModel so the last stretch of reading is still committed after leaving. */
         private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

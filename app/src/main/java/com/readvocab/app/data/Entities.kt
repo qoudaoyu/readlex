@@ -75,7 +75,8 @@ data class EncounterEntity(
     val aiMeaning: String? = null,
 )
 
-enum class ReviewSource { LOOKUP, READING, CARD }
+/** ADD marks the moment a word joined the word list; it is not a review. */
+enum class ReviewSource { LOOKUP, READING, CARD, ADD }
 
 @Entity(tableName = "review_log", indices = [Index("at")])
 data class ReviewLogEntity(
@@ -84,4 +85,12 @@ data class ReviewLogEntity(
     val rating: Int,
     val source: ReviewSource,
     val at: Long,
+)
+
+/** Words read and active reading time per local calendar day ([day] is the local epoch day). */
+@Entity(tableName = "daily_reading")
+data class DailyReadingEntity(
+    @PrimaryKey val day: Long,
+    val words: Int = 0,
+    val seconds: Long = 0,
 )

@@ -32,6 +32,9 @@ interface BookDao {
 
     @Query("DELETE FROM chapters WHERE bookId = :id")
     suspend fun deleteChapters(id: Long)
+
+    @Query("SELECT COUNT(*) FROM books")
+    suspend fun count(): Int
 }
 
 @Dao
@@ -67,6 +70,9 @@ interface WordDao {
     @Query("DELETE FROM words WHERE lemma = :lemma")
     suspend fun delete(lemma: String)
 
+    @Query("SELECT COUNT(*) FROM words")
+    suspend fun count(): Int
+
     companion object {
         val REVIEW_STATUSES = listOf(WordStatus.LEARNING, WordStatus.FAMILIAR, WordStatus.MASTERED)
     }
@@ -99,6 +105,27 @@ interface ReviewLogDao {
     @Insert
     suspend fun insert(log: ReviewLogEntity)
 
-    @Query("SELECT COUNT(*) FROM review_log WHERE at >= :since")
-    fun observeCountSince(since: Long): Flow<Int>
+    /** Every log entry since [since], oldest first (reviews and word-list additions). */
+    @Query("SELECT at, source FROM review_log WHERE at >= :since ORDER BY at")
+    fun observeSince(since: Long): Flow<List<LogPoint>>
+
+    @Query("SELECT COUNT(*) FROM review_log WHERE source != 'ADD'")
+    fun observeTotalReviews(): Flow<Int>
+}
+
+data class LogPoint(val at: Long, val source: ReviewSource)
+
+@Dao
+interface DailyReadingDao {
+    @Query("INSERT OR IGNORE INTO daily_reading (day, words, seconds) VALUES (:day, 0, 0)")
+    suspend fun ensure(day: Long)
+
+    @Query("UPDATE daily_reading SET words = words + :words, seconds = seconds + :seconds WHERE day = :day")
+    suspend fun add(day: Long, words: Int, seconds: Long)
+
+    @Query("SELECT * FROM daily_reading WHERE day >= :fromDay ORDER BY day")
+    fun observeFrom(fromDay: Long): Flow<List<DailyReadingEntity>>
+
+    @Query("SELECT COALESCE(SUM(words), 0) FROM daily_reading")
+    fun observeTotalWords(): Flow<Int>
 }
