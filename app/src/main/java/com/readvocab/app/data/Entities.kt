@@ -17,7 +17,16 @@ data class BookEntity(
     val lastReadAt: Long = 0,
     val chapterIndex: Int = 0,
     val paragraphIndex: Int = 0,
-)
+    /** [KIND_BOOK] or [KIND_STORY] (an AI review story). */
+    val kind: String = KIND_BOOK,
+) {
+    val isStory: Boolean get() = kind == KIND_STORY
+
+    companion object {
+        const val KIND_BOOK = "BOOK"
+        const val KIND_STORY = "STORY"
+    }
+}
 
 @Entity(tableName = "chapters", primaryKeys = ["bookId", "idx"])
 data class ChapterEntity(

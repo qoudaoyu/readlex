@@ -98,7 +98,14 @@ class WordRepository(private val db: AppDatabase) {
      *  - Words under review that are due and were read without tapping count as a successful recall.
      *  - New words that were highlighted but not tapped earn a "pass"; after enough passes they become known.
      */
-    suspend fun commitReading(passed: Collection<PassedWord>, bookId: Long?, bookTitle: String, autoKnownAfter: Int): ReadingResult {
+    /**
+     * @param earlyReviewAfterMs when set (review stories), a word that is not due yet still counts as
+     *   reviewed if at least this long has passed since its last review; FSRS gives a smaller boost for
+     *   an early review, so intervals are not inflated.
+     */
+    suspend fun commitReading(
+        passed: Collection<PassedWord>, bookId: Long?, bookTitle: String, autoKnownAfter: Int, earlyReviewAfterMs: Long? = null,
+    ): ReadingResult {
         if (passed.isEmpty()) return ReadingResult(0, 0)
         return db.withTransaction {
             val now = System.currentTimeMillis()
@@ -109,7 +116,8 @@ class WordRepository(private val db: AppDatabase) {
             for (p in passed) {
                 val w = existing[p.lemma]
                 if (w != null && w.status.isInReview) {
-                    if (w.due <= now) {
+                    val early = earlyReviewAfterMs != null && now - w.lastReview >= earlyReviewAfterMs
+                    if (w.due <= now || early) {
                         updates += w.withMemory(fsrs.review(w.memory, Rating.Good, now), now)
                         log.insert(ReviewLogEntity(lemma = w.lemma, rating = Rating.Good.value, source = ReviewSource.READING, at = now))
                         addEncounter(w.lemma, p.surface, p.sentence, bookId, bookTitle, now)

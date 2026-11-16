@@ -44,7 +44,7 @@ class StoryGenerator(
         val used = Tokenizer.tokenize(story.body).map { dictionary.lemma(it.text) }.toSet()
         val missing = targets.map { it.lemma }.filter { it !in used }
         val title = story.title.ifBlank { "Review Story" }
-        val id = books.importText("复习：$title", "$title\n\n${story.body.trim()}", author = "AI 复习短文 · ${targets.size} 个目标词")
+        val id = books.importText("复习：$title", "$title\n\n${story.body.trim()}", author = "AI 复习短文 · ${targets.size} 个目标词", kind = BookEntity.KIND_STORY)
         StoryResult(id, title, targets.map { it.lemma }, missing)
     }
 

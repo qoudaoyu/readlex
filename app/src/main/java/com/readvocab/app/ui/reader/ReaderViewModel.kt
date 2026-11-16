@@ -184,7 +184,8 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
                 passed[t.lemma] = PassedWord(t.lemma, t.surface, Tokenizer.sentenceAt(p.text, t.start), h == Highlight.NEW)
             }
         }
-        val result = c.words.commitReading(passed.values, bookId, s.book?.title.orEmpty(), settings.autoKnownAfter)
+        val early = if (s.book?.isStory == true) STORY_EARLY_REVIEW_MS else null
+        val result = c.words.commitReading(passed.values, bookId, s.book?.title.orEmpty(), settings.autoKnownAfter, early)
         if (result.reviewed > 0 || result.autoKnown > 0) {
             val parts = buildList {
                 if (result.reviewed > 0) add("在阅读中复习了 ${result.reviewed} 个词")
@@ -340,6 +341,9 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
     }
 
     companion object {
+        /** In a review story, a target word read 12+ hours after its last review counts even if not due. */
+        private const val STORY_EARLY_REVIEW_MS = 12 * 60 * 60 * 1000L
+
         /** Outlives the ViewModel so the last stretch of reading is still committed after leaving. */
         private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
