@@ -26,6 +26,12 @@ data class SentenceExplanation(
     val notes: List<String> = emptyList(),
 )
 
+/** A word the review story must use, with the meaning the learner met it in. */
+data class StoryWord(val lemma: String, val meaning: String)
+
+@Serializable
+data class ReviewStory(val title: String = "", val body: String = "")
+
 /**
  * Reading-tutor features built on any [AiProvider]. Prompts ask for JSON so the UI can render
  * fields; parsing is lenient because not every provider supports structured outputs.
@@ -57,6 +63,31 @@ class AiTutor(private val provider: AiProvider) {
         return parse(provider.complete(SYSTEM_SENTENCE, user, 4000))
     }
 
+    /**
+     * Writes a short article that naturally uses every target word, keeping all other vocabulary
+     * within the learner's level, so the targets are the only hard words on the page.
+     */
+    fun reviewStory(words: List<StoryWord>, vocabSize: Int, topic: String): ReviewStory {
+        val user = buildString {
+            appendLine("读者是中文母语的英语学习者，词汇量约 ${vocabSize} 词（大致认识英语最常用的前 ${vocabSize} 个词）。")
+            appendLine("请写一篇 250 到 400 词的英文短文，题材：$topic。")
+            appendLine("必须自然地用到下面每一个目标词（可以用屈折形式，如复数、过去式），并且用的是括号里的意思：")
+            words.forEach { appendLine("- ${it.lemma}（${it.meaning}）") }
+            appendLine()
+            appendLine("要求：")
+            appendLine("1. 除目标词外，其他用词尽量不超过读者的词汇量，句子清楚易读。")
+            appendLine("2. 目标词出现的语境要能帮读者推断或回忆词义；重要的词可以出现两次。")
+            appendLine("3. 内容要有趣、连贯，像一篇真实的文章，而不是罗列单词的练习。")
+            appendLine("4. 不要加粗或标注目标词，不要附词汇表或翻译。")
+            appendLine("5. 段落之间用空行分隔。")
+            appendLine()
+            appendLine("""请只输出一个 JSON 对象：{"title": "英文标题", "body": "正文"}""")
+        }
+        val story = parse<ReviewStory>(provider.complete(SYSTEM_STORY, user, 8000))
+        if (story.body.isBlank()) throw AiException("AI 没有返回文章内容")
+        return story
+    }
+
     /** Quick round trip used by the settings screen. */
     fun ping(): String = provider.complete("You are a test endpoint.", "Reply with the single word: OK", 2000).trim()
 
@@ -76,6 +107,10 @@ class AiTutor(private val provider: AiProvider) {
         private const val SYSTEM_SENTENCE =
             "你是面向中文母语者的英语阅读老师。帮助学习者理解难句：给出自然的中文翻译，并讲清楚句子结构。" +
                 "只输出 JSON，不要输出其他文字。"
+
+        private const val SYSTEM_STORY =
+            "你是为英语学习者写分级读物的作者。你写的文章自然、有趣，难度严格控制在读者水平，" +
+                "并且把指定的目标词放进能帮助理解的语境里。只输出 JSON，不要输出其他文字。"
 
         /** Pulls the first balanced {...} block out of a reply that may include code fences or prose. */
         fun extractJsonObject(text: String): String? {

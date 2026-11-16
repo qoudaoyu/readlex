@@ -5,6 +5,7 @@ import com.readvocab.app.data.AppDatabase
 import com.readvocab.app.data.BookRepository
 import com.readvocab.app.data.DictionaryRepository
 import com.readvocab.app.data.SettingsStore
+import com.readvocab.app.data.StoryGenerator
 import com.readvocab.app.data.WordRepository
 import com.readvocab.core.ai.AiProviders
 import com.readvocab.core.ai.AiTutor
@@ -20,6 +21,7 @@ class AppContainer(app: Application) {
     val books = BookRepository(app, database)
     val words = WordRepository(database)
     val settings = SettingsStore(app)
+    val stories = StoryGenerator(words, books, dictionary, settings) { tutor() }
 
     /** Returns a tutor for the current AI settings, or null if no key is configured. */
     fun tutor(): AiTutor? {

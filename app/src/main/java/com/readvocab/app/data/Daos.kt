@@ -54,6 +54,13 @@ interface WordDao {
     @Query("SELECT * FROM words WHERE status IN (:statuses) AND due <= :now ORDER BY due LIMIT :limit")
     suspend fun due(now: Long, limit: Int, statuses: List<WordStatus> = REVIEW_STATUSES): List<WordEntity>
 
+    /** Words for a review story: overdue first, then the ones coming due soonest; lapses break ties. */
+    @Query("SELECT * FROM words WHERE status IN (:statuses) ORDER BY due ASC, lapses DESC LIMIT :limit")
+    suspend fun soonestDue(limit: Int, statuses: List<WordStatus> = REVIEW_STATUSES): List<WordEntity>
+
+    @Query("SELECT COUNT(*) FROM words WHERE status IN (:statuses) AND due <= :now")
+    suspend fun countDue(now: Long, statuses: List<WordStatus> = REVIEW_STATUSES): Int
+
     @Query("SELECT * FROM words WHERE status IN (:statuses) ORDER BY updatedAt DESC")
     fun observeByStatus(statuses: List<WordStatus>): Flow<List<WordEntity>>
 

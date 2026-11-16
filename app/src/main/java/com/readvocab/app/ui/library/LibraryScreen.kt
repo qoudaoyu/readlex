@@ -32,7 +32,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -100,6 +102,12 @@ class LibraryViewModel(private val c: AppContainer) : ViewModel() {
     fun importUri(uri: Uri, onOpen: (Long) -> Unit) = runImport({ c.books.importUri(uri) }, onOpen)
     fun importText(title: String, text: String, onOpen: (Long) -> Unit) = runImport({ c.books.importText(title, text) }, onOpen)
     fun delete(id: Long) = viewModelScope.launch { c.books.delete(id) }
+
+    /** Daily automatic review story (if enabled and enough words are due). */
+    val autoStory = MutableSharedFlow<com.readvocab.app.data.StoryResult>(extraBufferCapacity = 1)
+    init {
+        viewModelScope.launch { c.stories.maybeAutoGenerate()?.let { autoStory.emit(it) } }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -112,6 +120,12 @@ fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview:
     var deleting by remember { mutableStateOf<BookEntity?>(null) }
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
+    LaunchedEffect(Unit) {
+        vm.autoStory.collect { r ->
+            val res = snackbar.showSnackbar("已用 ${r.words.size} 个待复习的词生成短文《${r.title}》", actionLabel = "去读", duration = SnackbarDuration.Long)
+            if (res == SnackbarResult.ActionPerformed) onOpenBook(r.bookId)
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importUri(uri, onOpenBook)

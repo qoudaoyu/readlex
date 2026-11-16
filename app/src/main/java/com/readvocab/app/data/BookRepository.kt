@@ -41,9 +41,9 @@ class BookRepository(private val context: Context, private val db: AppDatabase) 
         save(BookImporter.parse(bytes, name, resolver.getType(uri)))
     }
 
-    suspend fun importText(title: String, text: String): Long = withContext(Dispatchers.IO) {
+    suspend fun importText(title: String, text: String, author: String = "", kind: String = BookEntity.KIND_BOOK): Long = withContext(Dispatchers.IO) {
         if (text.isBlank()) throw ImportException("内容是空的")
-        save(ParsedBook(title.ifBlank { "粘贴的文章" }, "", TxtImporter.splitChapters(text)))
+        save(ParsedBook(title.ifBlank { "粘贴的文章" }, author, TxtImporter.splitChapters(text)), kind)
     }
 
     suspend fun importSampleIfEmpty() = withContext(Dispatchers.IO) {
@@ -54,12 +54,12 @@ class BookRepository(private val context: Context, private val db: AppDatabase) 
         prefs.edit().putBoolean("sampleImported", true).apply()
     }
 
-    private suspend fun save(book: ParsedBook): Long {
+    private suspend fun save(book: ParsedBook, kind: String = BookEntity.KIND_BOOK): Long {
         val chapterWords = book.chapters.map { Tokenizer.countWords(it.text) }
         val id = dao.insert(
             BookEntity(
                 title = book.title, author = book.author, chapterCount = book.chapters.size,
-                wordCount = chapterWords.sum(), addedAt = System.currentTimeMillis(),
+                wordCount = chapterWords.sum(), addedAt = System.currentTimeMillis(), kind = kind,
             )
         )
         val dir = bookDir(id).apply { mkdirs() }

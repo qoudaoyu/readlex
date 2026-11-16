@@ -127,4 +127,20 @@ class CoreTest {
         assertTrue(p.buildRequestBody("s", "u\"q", 10).contains("\"content\":\"u\\\"q\""))
         assertEquals("hi", p.parseResponse("""{"choices":[{"message":{"role":"assistant","content":"hi"}}]}"""))
     }
+
+    @Test fun reviewStoryPrompt() {
+        var prompt = ""
+        val fake = object : com.readvocab.core.ai.AiProvider {
+            override fun complete(system: String, user: String, maxTokens: Int): String {
+                prompt = user
+                return "```json\n{\"title\": \"A Day\", \"body\": \"He was reluctant.\\n\\nThe plateau was high.\"}\n```"
+            }
+        }
+        val story = AiTutor(fake).reviewStory(
+            listOf(com.readvocab.core.ai.StoryWord("reluctant", "不情愿的"), com.readvocab.core.ai.StoryWord("plateau", "高原")), 6000, "科普",
+        )
+        assertEquals("A Day", story.title)
+        assertTrue(story.body.contains("\n\nThe plateau"))
+        assertTrue(prompt.contains("reluctant（不情愿的）") && prompt.contains("6000") && prompt.contains("科普"))
+    }
 }

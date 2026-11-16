@@ -86,7 +86,7 @@ private fun AppNav() {
                     onReview = { goTab("review") },
                 )
             }
-            composable("review") { ReviewScreen() }
+            composable("review") { ReviewScreen(onOpenBook = { nav.navigate("reader/$it") }) }
             composable("words") { WordbookScreen() }
             composable("settings") { SettingsScreen(onStartTest = { nav.navigate("vocabtest") }) }
             composable("vocabtest") { VocabTestScreen(onDone = { nav.popBackStack() }) }

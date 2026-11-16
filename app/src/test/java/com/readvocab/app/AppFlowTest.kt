@@ -75,6 +75,35 @@ class AppFlowTest {
 
         words.rate("reluctant", Rating.Good)
         assertTrue(words.get("reluctant")!!.reps >= 2)
+
+        // Review story: the generator picks words from the list, saves the article as a book.
+        for (w in listOf("plateau", "evaporate", "blunt")) words.setStatus(w, WordStatus.LEARNING)
+        var prompt = ""
+        val fake = object : com.readvocab.core.ai.AiProvider {
+            override fun complete(system: String, user: String, maxTokens: Int): String {
+                prompt = user
+                return """{"title": "The Hill", "body": "She was reluctant to climb.\n\nThe water evaporated on the plateau."}"""
+            }
+        }
+        val gen = com.readvocab.app.data.StoryGenerator(words, container.books, dict, container.settings) { com.readvocab.core.ai.AiTutor(fake) }
+        val result = gen.generate("科普")
+        assertEquals(setOf("reluctant", "plateau", "evaporate", "blunt"), result.words.toSet())
+        assertEquals(listOf("blunt"), result.missing)
+        assertTrue(prompt.contains("plateau"))
+        val book = container.books.get(result.bookId)!!
+        assertEquals("复习：The Hill", book.title)
+        assertTrue(book.isStory)
+
+        // In a review story, a not-yet-due word read 12h+ after its last review still counts.
+        val day = 24 * 60 * 60 * 1000L
+        val now = System.currentTimeMillis()
+        val p = words.get("plateau")!!
+        container.database.words().upsert(p.copy(lastReview = now - day, due = now + day))
+        val passed = listOf(PassedWord("plateau", "plateau", "The water evaporated on the plateau.", false))
+        assertEquals(0, words.commitReading(passed, null, "Book", 3).reviewed) // ordinary book: not due, no credit
+        assertEquals(1, words.commitReading(passed, result.bookId, "Story", 3, 12 * 60 * 60 * 1000L).reviewed)
+        assertEquals(0, words.commitReading(passed, result.bookId, "Story", 3, 12 * 60 * 60 * 1000L).reviewed) // just reviewed
+        assertTrue(container.books.chapterText(result.bookId, 0).contains("evaporated on the plateau"))
     }
 
     @Test fun libraryReaderAndScreens() {
@@ -144,6 +173,9 @@ class AppFlowTest {
         compose.onNode(hasText("生词本")).performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("plateau")).fetchSemanticsNodes().isNotEmpty() }
         shot("4-wordbook")
+        compose.onNode(hasText("复习")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("生成复习短文")).fetchSemanticsNodes().isNotEmpty() }
+        shot("6-review")
         compose.onNode(hasText("设置")).performClick()
         compose.waitForIdle()
         shot("5-settings")
