@@ -35,7 +35,21 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class TokenInfo(val start: Int, val end: Int, val surface: String, val lemma: String)
-data class Para(val text: String, val tokens: List<TokenInfo>)
+data class Para(val text: String, val tokens: List<TokenInfo>, val sentences: List<IntRange>) {
+    fun sentenceIndexAt(offset: Int): Int =
+        sentences.indexOfFirst { offset <= it.last }.let { if (it < 0) sentences.lastIndex else it }
+}
+
+data class SentencePos(val para: Int, val sentence: Int) : Comparable<SentencePos> {
+    override fun compareTo(other: SentencePos) = compareValuesBy(this, other, { it.para }, { it.sentence })
+}
+
+/** A run of whole sentences, possibly spanning paragraphs. */
+data class Selection(val anchor: SentencePos, val focus: SentencePos) {
+    val start: SentencePos get() = minOf(anchor, focus)
+    val end: SentencePos get() = maxOf(anchor, focus)
+    fun contains(p: SentencePos) = p >= start && p <= end
+}
 
 data class ReaderState(
     val book: BookEntity? = null,
@@ -56,7 +70,7 @@ data class LookupState(
     val ai: Async<ContextualMeaning> = Async.Idle,
 )
 
-data class SentenceState(val sentence: String, val context: String, val ai: Async<SentenceExplanation> = Async.Idle)
+data class SentenceState(val sentence: String, val context: String, val count: Int = 1, val ai: Async<SentenceExplanation> = Async.Idle)
 
 class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : ViewModel() {
     private val _state = MutableStateFlow(ReaderState())
@@ -73,6 +87,9 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
 
     private val _sentence = MutableStateFlow<SentenceState?>(null)
     val sentence: StateFlow<SentenceState?> = _sentence.asStateFlow()
+
+    private val _selection = MutableStateFlow<Selection?>(null)
+    val selection: StateFlow<Selection?> = _selection.asStateFlow()
 
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
@@ -100,12 +117,17 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         val text = c.books.chapterText(bookId, index)
         val paras = withContext(Dispatchers.Default) {
             Tokenizer.paragraphs(text).map { p ->
-                Para(p, Tokenizer.tokenize(p).map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text)) })
+                Para(
+                    p,
+                    Tokenizer.tokenize(p).map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text)) },
+                    Tokenizer.sentenceRanges(p),
+                )
             }
         }
         seenUpTo = -1
         committedUpTo = -1
         tapped.clear()
+        _selection.value = null
         _state.update { it.copy(chapterIndex = index, paragraphs = paras, startParagraph = startParagraph.coerceIn(0, paras.size), loading = false) }
         c.books.saveProgress(bookId, index, startParagraph)
     }
@@ -176,6 +198,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         para.tokens.firstOrNull { offset >= it.start && offset < it.end } ?: para.tokens.firstOrNull { offset == it.end }
 
     fun onTap(paraIndex: Int, offset: Int) {
+        if (_selection.value != null) { _selection.value = null; return }
         val para = _state.value.paragraphs.getOrNull(paraIndex) ?: return
         val token = findToken(para, offset) ?: return
         val sentence = Tokenizer.sentenceAt(para.text, token.start)
@@ -183,11 +206,29 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         aiJob?.cancel()
         viewModelScope.launch {
             val entry = c.dictionary.lookup(token.lemma) ?: c.dictionary.lookup(token.surface.lowercase())
-            val word = if (entry != null) {
-                c.words.onLookup(entry.word, token.surface, sentence, bookId, _state.value.book?.title.orEmpty())
-            } else c.words.get(token.lemma)
-            _lookup.value = LookupState(token.surface, entry?.word ?: token.lemma, sentence, entry, word)
+            val lemma = entry?.word ?: token.lemma
+            val word = c.words.onLookup(lemma)
+            _lookup.value = LookupState(token.surface, lemma, sentence, entry, word)
             if (c.settings.current.autoAi && c.tutor() != null) fetchMeaning()
+        }
+    }
+
+    /** The prominent "加入生词表" button on the word card. */
+    fun addToWordList() {
+        val l = _lookup.value ?: return
+        viewModelScope.launch {
+            val meaning = (l.ai as? Async.Done)?.value?.meaning
+            val w = c.words.addToLearning(l.lemma, l.surface, l.sentence, bookId, _state.value.book?.title.orEmpty(), meaning)
+            _lookup.update { cur -> if (cur?.lemma == l.lemma) cur.copy(word = w) else cur }
+            messages.tryEmit("已加入生词表：${l.lemma}")
+        }
+    }
+
+    fun removeFromWordList() {
+        val l = _lookup.value ?: return
+        viewModelScope.launch {
+            c.words.delete(l.lemma)
+            _lookup.update { cur -> if (cur?.lemma == l.lemma) cur.copy(word = null) else cur }
         }
     }
 
@@ -221,11 +262,56 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         }
     }
 
-    fun onLongPress(paraIndex: Int, offset: Int) {
-        val para = _state.value.paragraphs.getOrNull(paraIndex) ?: return
-        val sentence = Tokenizer.sentenceAt(para.text, offset)
-        if (sentence.isBlank()) return
-        _sentence.value = SentenceState(sentence, para.text)
+    private fun posAt(paraIndex: Int, offset: Int): SentencePos? {
+        val para = _state.value.paragraphs.getOrNull(paraIndex) ?: return null
+        if (para.sentences.isEmpty()) return null
+        return SentencePos(paraIndex, para.sentenceIndexAt(offset))
+    }
+
+    /** Long press: select the sentence under the finger. */
+    fun startSelection(paraIndex: Int, offset: Int) {
+        val p = posAt(paraIndex, offset) ?: return
+        _selection.value = Selection(p, p)
+    }
+
+    /** Dragging after the long press: grow or shrink the selection a whole sentence at a time. */
+    fun extendSelection(paraIndex: Int, offset: Int) {
+        val sel = _selection.value ?: return
+        val p = posAt(paraIndex, offset) ?: return
+        if (p != sel.focus) _selection.value = sel.copy(focus = p)
+    }
+
+    fun clearSelection() { _selection.value = null }
+
+    fun selectionCount(sel: Selection): Int {
+        val paras = _state.value.paragraphs
+        var n = 0
+        for (pi in sel.start.para..sel.end.para) {
+            val count = paras.getOrNull(pi)?.sentences?.size ?: 0
+            val from = if (pi == sel.start.para) sel.start.sentence else 0
+            val to = if (pi == sel.end.para) sel.end.sentence else count - 1
+            n += (to - from + 1).coerceAtLeast(0)
+        }
+        return n
+    }
+
+    /** Translates and explains the selected sentences together. */
+    fun translateSelection() {
+        val sel = _selection.value ?: return
+        val paras = _state.value.paragraphs
+        val pieces = ArrayList<String>()
+        for (pi in sel.start.para..sel.end.para) {
+            val para = paras.getOrNull(pi) ?: continue
+            val from = if (pi == sel.start.para) sel.start.sentence else 0
+            val to = if (pi == sel.end.para) sel.end.sentence else para.sentences.lastIndex
+            if (from > to) continue
+            val text = para.text.substring(para.sentences[from].first, para.sentences[to].last + 1)
+            pieces += text
+        }
+        if (pieces.isEmpty()) return
+        val context = (sel.start.para..sel.end.para).mapNotNull { paras.getOrNull(it)?.text }.joinToString("\n")
+        _selection.value = null
+        _sentence.value = SentenceState(pieces.joinToString("\n"), context, selectionCount(sel))
         explainSentence()
     }
 

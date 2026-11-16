@@ -37,27 +37,35 @@ class WordRepository(private val db: AppDatabase) {
     }
 
     /**
-     * The user tapped a word while reading: that means "I'm not sure about this one".
-     * New words start learning; words under review count as a failed recall.
+     * The user tapped a word while reading. Looking a word up does not add it to the word list;
+     * but if it is already being learned, needing to look it up again counts as a failed recall.
+     * Returns the (possibly updated) record, or null when the word has none.
      */
-    suspend fun onLookup(lemma: String, surface: String, sentence: String, bookId: Long?, bookTitle: String): WordEntity =
-        db.withTransaction {
-            val now = System.currentTimeMillis()
-            val existing = words.get(lemma) ?: newEntity(lemma, now)
-            val updated = when (existing.status) {
-                WordStatus.NEW -> existing.withMemory(fsrs.review(MemoryState(), Rating.Again, now), now)
-                WordStatus.LEARNING, WordStatus.FAMILIAR, WordStatus.MASTERED ->
-                    if (now - existing.lastReview > RELOOKUP_GRACE_MS) existing.withMemory(fsrs.review(existing.memory, Rating.Again, now), now)
-                    else existing
-                WordStatus.KNOWN, WordStatus.IGNORED -> existing
-            }.let { it.copy(lookups = it.lookups + 1, updatedAt = now) }
-            words.upsert(updated)
-            if (updated.status != existing.status || updated.reps != existing.reps) {
-                log.insert(ReviewLogEntity(lemma = lemma, rating = Rating.Again.value, source = ReviewSource.LOOKUP, at = now))
-            }
-            if (updated.status.isInReview) addEncounter(lemma, surface, sentence, bookId, bookTitle, now)
-            updated
+    suspend fun onLookup(lemma: String): WordEntity? = db.withTransaction {
+        val now = System.currentTimeMillis()
+        val existing = words.get(lemma) ?: return@withTransaction null
+        var updated = existing.copy(lookups = existing.lookups + 1, updatedAt = now)
+        if (existing.status.isInReview && now - existing.lastReview > RELOOKUP_GRACE_MS) {
+            updated = updated.withMemory(fsrs.review(existing.memory, Rating.Again, now), now)
+            log.insert(ReviewLogEntity(lemma = lemma, rating = Rating.Again.value, source = ReviewSource.LOOKUP, at = now))
         }
+        words.upsert(updated)
+        updated
+    }
+
+    /** "加入生词表": starts learning the word and keeps the sentence it was met in for review cards. */
+    suspend fun addToLearning(
+        lemma: String, surface: String, sentence: String, bookId: Long?, bookTitle: String, aiMeaning: String?,
+    ): WordEntity = db.withTransaction {
+        val now = System.currentTimeMillis()
+        val existing = words.get(lemma) ?: newEntity(lemma, now)
+        val updated = if (existing.status.isInReview) existing
+        else existing.withMemory(fsrs.review(MemoryState(), Rating.Again, now), now).copy(lookups = existing.lookups + 1)
+        words.upsert(updated)
+        addEncounter(lemma, surface, sentence, bookId, bookTitle, now)
+        if (!aiMeaning.isNullOrBlank()) encounters.setAiMeaning(lemma, sentence, aiMeaning)
+        updated
+    }
 
     suspend fun setStatus(lemma: String, status: WordStatus) {
         val now = System.currentTimeMillis()

@@ -37,6 +37,8 @@ class CoreTest {
         assertEquals("The cat sat on the mat!", Tokenizer.sentenceAt(p, p.indexOf("cat")))
         assertEquals("First one.", Tokenizer.sentenceAt(p, 2))
         assertEquals("Last.", Tokenizer.sentenceAt(p, p.length - 2))
+        val ranges = Tokenizer.sentenceRanges(p).map { p.substring(it.first, it.last + 1).trim() }
+        assertEquals(listOf("First one.", "The cat sat on the mat!", "\"Really?\" she asked.", "Last."), ranges)
     }
 
     @Test fun lemmatizer() {

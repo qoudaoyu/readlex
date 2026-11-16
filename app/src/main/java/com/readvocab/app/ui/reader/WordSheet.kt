@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,6 +67,8 @@ fun WordSheet(
     onDismiss: () -> Unit,
     onSpeak: (String) -> Unit,
     onAskAi: () -> Unit,
+    onAdd: () -> Unit,
+    onRemove: () -> Unit,
     onSetStatus: (WordStatus) -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)) {
@@ -83,11 +86,22 @@ fun WordSheet(
                 Text("文中形式：${state.surface}", style = MaterialTheme.typography.bodySmall)
             }
             val word = state.word
+            val inList = word?.status?.isInReview == true
+            if (inList) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("✓ 已在生词表（${word!!.status.label}）", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onRemove) { Text("移出生词表") }
+                }
+            } else {
+                Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.BookmarkAdd, null, Modifier.size(18.dp)); Spacer(Modifier.size(6.dp))
+                    Text("加入生词表")
+                }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 state.entry?.tagLabels?.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
-                if (word != null && word.status != WordStatus.NEW) {
-                    val extra = if (word.status.isInReview) " · 下次复习 ${formatDue(word.due)}" else ""
-                    AssistChip(onClick = {}, label = { Text(word.status.label + extra) })
+                if (word != null && word.status.isInReview) {
+                    AssistChip(onClick = {}, label = { Text("下次复习 ${formatDue(word.due)}") })
                 }
             }
             if (state.entry != null) {
@@ -122,17 +136,11 @@ fun WordSheet(
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val status = word?.status
-                if (status == null || status == WordStatus.NEW || status == WordStatus.KNOWN || status == WordStatus.IGNORED) {
-                    Button(onClick = { onSetStatus(WordStatus.LEARNING) }) { Text("加入学习") }
+            if (word?.status != WordStatus.KNOWN && word?.status != WordStatus.IGNORED && !inList) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onSetStatus(WordStatus.KNOWN); onDismiss() }) { Text("我认识，别再标出") }
+                    TextButton(onClick = { onSetStatus(WordStatus.IGNORED); onDismiss() }) { Text("忽略") }
                 }
-                if (status != WordStatus.KNOWN) OutlinedButton(onClick = { onSetStatus(WordStatus.KNOWN); onDismiss() }) { Text("我认识") }
-                if (status != WordStatus.IGNORED) TextButton(onClick = { onSetStatus(WordStatus.IGNORED); onDismiss() }) { Text("忽略") }
-            }
-            if (word?.status?.isInReview == true) {
-                Text("点过的词会自动加入学习；之后在阅读里再遇到它就算一次复习。", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -147,7 +155,7 @@ fun SentenceSheet(state: SentenceState, onDismiss: () -> Unit, onRetry: () -> Un
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("整句解析", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(if (state.count > 1) "翻译与解析（${state.count} 句）" else "整句解析", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 IconButton(onClick = { onSpeak(state.sentence) }) { Icon(Icons.AutoMirrored.Outlined.VolumeUp, "朗读") }
             }
             Text(state.sentence, style = MaterialTheme.typography.bodyLarge)
