@@ -22,12 +22,18 @@ data class AppSettings(
     /** Read past a highlighted new word this many times without tapping and it is marked known. 0 = off. */
     val autoKnownAfter: Int = 3,
     val fontSizeSp: Int = 18,
+    /** Generate a review story automatically on app open when enough words are due. */
+    val autoStory: Boolean = false,
+    val storyTopic: String = STORY_TOPICS.first(),
+    /** Day (epoch day) the last automatic story was generated. */
+    val lastAutoStoryDay: Long = 0,
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
 
     companion object {
         /** Before the test, assume a typical learner who passed CET-4. */
         const val DEFAULT_BOUNDARY = 3000
+        val STORY_TOPICS = listOf("随机", "短篇故事", "新闻报道", "科普", "日常生活", "历史", "商业职场")
     }
 }
 
@@ -55,6 +61,9 @@ class SettingsStore(context: Context) {
             knownBoundary = prefs.getInt("knownBoundary", d.knownBoundary),
             autoKnownAfter = prefs.getInt("autoKnownAfter", d.autoKnownAfter),
             fontSizeSp = prefs.getInt("fontSizeSp", d.fontSizeSp),
+            autoStory = prefs.getBoolean("autoStory", d.autoStory),
+            storyTopic = prefs.getString("storyTopic", d.storyTopic)!!,
+            lastAutoStoryDay = prefs.getLong("lastAutoStoryDay", 0),
         )
     }
 
@@ -71,6 +80,9 @@ class SettingsStore(context: Context) {
             .putInt("knownBoundary", s.knownBoundary)
             .putInt("autoKnownAfter", s.autoKnownAfter)
             .putInt("fontSizeSp", s.fontSizeSp)
+            .putBoolean("autoStory", s.autoStory)
+            .putString("storyTopic", s.storyTopic)
+            .putLong("lastAutoStoryDay", s.lastAutoStoryDay)
             .apply()
         _settings.value = s
     }

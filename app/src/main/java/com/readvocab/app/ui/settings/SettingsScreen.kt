@@ -168,6 +168,12 @@ fun SettingsScreen(onStartTest: () -> Unit) {
             }
             SwitchRow("点词时自动请求 AI 语境释义", "关闭时需要在查词卡片里手动点一下，更省额度", s.autoAi) { v -> vm.update { it.copy(autoAi = v) } }
 
+            SwitchRow(
+                "每天自动生成复习短文",
+                "打开 App 时，如果到期的词达到 8 个、今天还没生成过，就用它们写一篇短文放进书架",
+                s.autoStory,
+            ) { v -> vm.update { it.copy(autoStory = v) } }
+
             HorizontalDivider()
             Text("阅读", style = MaterialTheme.typography.titleMedium)
             SwitchRow("只高亮学习中的词", "关闭时，超出你词汇量的生词也会加下划线", s.highlightMode == HighlightMode.LEARNING_ONLY) { v ->

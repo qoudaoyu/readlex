@@ -41,9 +41,9 @@ class BookRepository(private val context: Context, private val db: AppDatabase) 
         save(BookImporter.parse(bytes, name, resolver.getType(uri)))
     }
 
-    suspend fun importText(title: String, text: String): Long = withContext(Dispatchers.IO) {
+    suspend fun importText(title: String, text: String, author: String = ""): Long = withContext(Dispatchers.IO) {
         if (text.isBlank()) throw ImportException("内容是空的")
-        save(ParsedBook(title.ifBlank { "粘贴的文章" }, "", TxtImporter.splitChapters(text)))
+        save(ParsedBook(title.ifBlank { "粘贴的文章" }, author, TxtImporter.splitChapters(text)))
     }
 
     suspend fun importSampleIfEmpty() = withContext(Dispatchers.IO) {

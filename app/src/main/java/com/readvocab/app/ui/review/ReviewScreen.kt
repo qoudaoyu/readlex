@@ -10,7 +10,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import com.readvocab.app.data.AppSettings
+import com.readvocab.app.data.StoryResult
+import com.readvocab.app.ui.Async
+import com.readvocab.core.ai.AiException
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +70,24 @@ data class ReviewState(
 class ReviewViewModel(private val c: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(ReviewState())
     val state = _state.asStateFlow()
+    val settings = c.settings.settings
+    val story = MutableStateFlow<Async<StoryResult>>(Async.Idle)
+
+    fun setTopic(t: String) = c.settings.update { it.copy(storyTopic = t) }
+
+    fun generateStory() {
+        if (story.value == Async.Loading) return
+        story.value = Async.Loading
+        viewModelScope.launch {
+            story.value = try {
+                Async.Done(c.stories.generate())
+            } catch (e: AiException) {
+                Async.Failed(e.message ?: "生成失败")
+            } catch (e: Exception) {
+                Async.Failed("生成失败：${e.message}")
+            }
+        }
+    }
 
     fun reload() = viewModelScope.launch {
         _state.value = ReviewState(loading = true)
@@ -88,16 +117,22 @@ fun cloze(sentence: String, surface: String): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReviewScreen() {
+fun ReviewScreen(onOpenBook: (Long) -> Unit) {
     val vm = appViewModel { ReviewViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val story by vm.story.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.reload() }
+    LaunchedEffect(story) {
+        (story as? Async.Done)?.let { vm.story.value = Async.Idle; onOpenBook(it.value.bookId) }
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("复习") }) }) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            StoryCard(story, settings.storyTopic, vm::setTopic, vm::generateStory)
             val card = state.current
             when {
                 state.loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -128,6 +163,37 @@ fun ReviewScreen() {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StoryCard(story: Async<StoryResult>, topic: String, onTopic: (String) -> Unit, onGenerate: () -> Unit) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("复习短文", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "AI 用你生词表里快到期的词写一篇短文。读的时候目标词会高亮，读过没点就算复习成功。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AppSettings.STORY_TOPICS.forEach { t ->
+                    FilterChip(selected = t == topic, onClick = { onTopic(t) }, label = { Text(t) })
+                }
+            }
+            when (story) {
+                Async.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("AI 正在写文章，大约需要 10–30 秒…", style = MaterialTheme.typography.bodyMedium)
+                }
+                is Async.Failed -> {
+                    Text(story.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    Button(onClick = onGenerate) { Text("重试") }
+                }
+                else -> Button(onClick = onGenerate) { Text("生成复习短文") }
             }
         }
     }

@@ -26,6 +26,8 @@ class WordRepository(private val db: AppDatabase) {
     suspend fun get(lemma: String) = words.get(lemma)
     suspend fun encounters(lemma: String) = encounters.forLemma(lemma)
     suspend fun due(limit: Int = 100) = words.due(System.currentTimeMillis(), limit)
+    suspend fun countDue() = words.countDue(System.currentTimeMillis())
+    suspend fun soonestDue(limit: Int) = words.soonestDue(limit)
 
     private fun newEntity(lemma: String, now: Long) =
         WordEntity(lemma = lemma, status = WordStatus.NEW, createdAt = now, updatedAt = now)
