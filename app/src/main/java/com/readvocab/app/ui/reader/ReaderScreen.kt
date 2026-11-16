@@ -46,7 +46,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.Button
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -75,6 +84,10 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     val statuses by vm.statuses.collectAsStateWithLifecycle()
     val lookup by vm.lookup.collectAsStateWithLifecycle()
     val sentence by vm.sentence.collectAsStateWithLifecycle()
+    val selection by vm.selection.collectAsStateWithLifecycle()
+    val layouts = remember { HashMap<Int, TextLayoutResult>() }
+    val density = LocalDensity.current
+    val horizontalPadPx = with(density) { READER_H_PADDING.toPx() }
     val snackbar = remember { SnackbarHostState() }
     var showChapters by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -153,26 +166,60 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            selection?.let { sel ->
+                BottomAppBar {
+                    Text("已选 ${vm.selectionCount(sel)} 句", Modifier.padding(start = 16.dp).weight(1f))
+                    TextButton(onClick = vm::clearSelection) { Text("取消") }
+                    Button(onClick = vm::translateSelection, modifier = Modifier.padding(end = 12.dp)) {
+                        Text("翻译并解析")
+                    }
+                }
+            }
+        },
     ) { padding ->
         if (state.loading) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             return@Scaffold
         }
+        // Maps a pointer position inside the list to (paragraph index, character offset).
+        fun hit(pos: Offset): Pair<Int, Int>? {
+            val info = listState.layoutInfo
+            val y = pos.y + info.viewportStartOffset
+            val item = info.visibleItemsInfo.firstOrNull { y >= it.offset && y < it.offset + it.size } ?: return null
+            val paraIndex = item.index - 1
+            val layout = layouts[paraIndex] ?: return null
+            if (paraIndex !in state.paragraphs.indices) return null
+            return paraIndex to layout.getOffsetForPosition(Offset(pos.x - horizontalPadPx, y - item.offset))
+        }
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .testTag("reader-list")
+                .sentenceSelectionGesture(
+                    onStart = { pos -> hit(pos)?.let { (p, o) -> vm.startSelection(p, o) } },
+                    onMove = { pos -> hit(pos)?.let { (p, o) -> vm.extendSelection(p, o) } },
+                ),
+            contentPadding = PaddingValues(horizontal = READER_H_PADDING, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item { Text(chapterTitle, style = MaterialTheme.typography.headlineSmall) }
             itemsIndexed(state.paragraphs) { i, para ->
+                // Selected sentences in one paragraph are contiguous: shade them as one block, gaps included.
+                val selected = selection?.let { sel ->
+                    val idx = para.sentences.indices.filter { sel.contains(SentencePos(i, it)) }
+                    if (idx.isEmpty()) emptyList() else listOf(para.sentences[idx.first()].first..para.sentences[idx.last()].last)
+                } ?: emptyList()
                 ParagraphText(
                     para = para,
                     fontSizeSp = settings.fontSizeSp,
                     dark = dark,
                     highlightFor = highlightFor,
+                    selected = selected,
+                    onLayout = { layouts[i] = it },
                     onTap = { vm.onTap(i, it) },
-                    onLongPress = { vm.onLongPress(i, it) },
                 )
             }
             item {
@@ -192,6 +239,8 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             onDismiss = vm::dismissLookup,
             onSpeak = speak,
             onAskAi = vm::fetchMeaning,
+            onAdd = vm::addToWordList,
+            onRemove = vm::removeFromWordList,
             onSetStatus = vm::setStatus,
         )
     }
@@ -218,18 +267,52 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     }
 }
 
+private val READER_H_PADDING = 20.dp
+
+/**
+ * Long-press then drag to select sentences. Watches the Initial pass so that, once the long press
+ * fires, the drag is ours: the list does not scroll and the paragraph does not treat the release as a tap.
+ */
+private fun Modifier.sentenceSelectionGesture(onStart: (Offset) -> Unit, onMove: (Offset) -> Unit): Modifier =
+    pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val cancelled = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                while (true) {
+                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                    val c = ev.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull true
+                    if (!c.pressed || c.isConsumed) return@withTimeoutOrNull true
+                    if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
+                }
+                @Suppress("UNREACHABLE_CODE") true
+            }
+            if (cancelled != null) return@awaitEachGesture // a tap or a scroll: leave it to the list and the text
+            onStart(down.position)
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                c.consume()
+                if (!c.pressed) break
+                onMove(c.position)
+            }
+        }
+    }
+
 @Composable
 private fun ParagraphText(
     para: Para,
     fontSizeSp: Int,
     dark: Boolean,
     highlightFor: (String) -> Highlight,
+    selected: List<IntRange>,
+    onLayout: (TextLayoutResult) -> Unit,
     onTap: (Int) -> Unit,
-    onLongPress: (Int) -> Unit,
 ) {
-    val annotated = remember(para, highlightFor, dark) {
+    val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    val annotated = remember(para, highlightFor, dark, selected, selectionColor) {
         buildAnnotatedString {
             append(para.text)
+            for (r in selected) addStyle(SpanStyle(background = selectionColor), r.first, r.last + 1)
             for (t in para.tokens) {
                 val style = when (highlightFor(t.lemma)) {
                     Highlight.NONE -> null
@@ -242,15 +325,13 @@ private fun ParagraphText(
         }
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val currentOnTap by rememberUpdatedState(onTap)
     Text(
         text = annotated,
         style = TextStyle(fontSize = fontSizeSp.sp, lineHeight = (fontSizeSp * 1.6f).sp, color = MaterialTheme.colorScheme.onSurface),
-        onTextLayout = { layout = it },
+        onTextLayout = { layout = it; onLayout(it) },
         modifier = Modifier.fillMaxWidth().pointerInput(para) {
-            detectTapGestures(
-                onTap = { pos -> layout?.let { onTap(it.getOffsetForPosition(pos)) } },
-                onLongPress = { pos -> layout?.let { onLongPress(it.getOffsetForPosition(pos)) } },
-            )
+            detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
         },
     )
 }

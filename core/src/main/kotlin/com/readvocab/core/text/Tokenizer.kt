@@ -17,30 +17,56 @@ object Tokenizer {
             .map { it.trim().replace(Regex("[ \t ]+"), " ") }
             .filter { it.isNotEmpty() }
 
-    private fun isTerminal(c: Char) = c == '.' || c == '!' || c == '?' || c == '…' || c == '\n'
+    private fun isTerminal(c: Char) = c == '.' || c == '!' || c == '?' || c == '\u2026'
+    private const val CLOSERS = "\"'\u201D\u2019)]"
 
-    /** Returns the [start, end) range of the sentence containing [offset]. */
-    fun sentenceRange(text: String, offset: Int): IntRange {
-        if (text.isEmpty()) return IntRange.EMPTY
-        val o = offset.coerceIn(0, text.length - 1)
-        var start = o
-        while (start > 0) {
-            val prev = text[start - 1]
-            if (isTerminal(prev) && (start >= text.length || text[start].isWhitespace() || text[start] == '"' || text[start] == '”')) break
-            start--
-        }
-        var end = o
-        while (end < text.length) {
-            val c = text[end]
-            end++
+    /** End offsets (exclusive) of every sentence in [text]; the last one is always text.length. */
+    private fun sentenceEnds(text: String): List<Int> {
+        val ends = ArrayList<Int>()
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c == '\n') { ends += i + 1; i++; continue }
             if (isTerminal(c)) {
-                // swallow closing quotes / brackets
-                while (end < text.length && text[end] in "\"'”’)]") end++
-                if (end >= text.length || text[end].isWhitespace()) break
+                var j = i + 1
+                while (j < text.length && isTerminal(text[j])) j++
+                while (j < text.length && text[j] in CLOSERS) j++
+                if (j >= text.length) break
+                if (text[j].isWhitespace()) {
+                    var k = j
+                    while (k < text.length && text[k].isWhitespace()) k++
+                    // "Really?" she asked. / Mr. smith -> lowercase continuation is the same sentence
+                    if (k < text.length && !text[k].isLowerCase()) ends += j
+                }
+                i = j
+                continue
             }
+            i++
         }
-        while (start < end && text[start].isWhitespace()) start++
-        return start until end
+        if (ends.lastOrNull() != text.length) ends += text.length
+        return ends
+    }
+
+    /** Splits a paragraph into sentence ranges (inclusive, whitespace-trimmed). */
+    fun sentenceRanges(text: String): List<IntRange> {
+        val out = ArrayList<IntRange>()
+        var start = 0
+        for (end in sentenceEnds(text)) {
+            var a = start
+            var b = end
+            while (a < b && text[a].isWhitespace()) a++
+            while (b > a && text[b - 1].isWhitespace()) b--
+            if (b > a) out += a until b
+            start = end
+        }
+        return out
+    }
+
+    /** Returns the range of the sentence containing [offset]. */
+    fun sentenceRange(text: String, offset: Int): IntRange {
+        val ranges = sentenceRanges(text)
+        if (ranges.isEmpty()) return IntRange.EMPTY
+        return ranges.firstOrNull { offset <= it.last } ?: ranges.last()
     }
 
     fun sentenceAt(text: String, offset: Int): String {

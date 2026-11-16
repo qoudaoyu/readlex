@@ -49,10 +49,10 @@ class AiTutor(private val provider: AiProvider) {
     fun explainSentence(sentence: String, context: String? = null): SentenceExplanation {
         val user = buildString {
             if (!context.isNullOrBlank()) appendLine("上下文：${context.take(1200)}")
-            appendLine("要解析的句子：$sentence")
+            appendLine("要翻译和解析的内容（一句或连续几句）：$sentence")
             appendLine()
             appendLine("请只输出一个 JSON 对象，字段：")
-            appendLine("""{"translation": "自然流畅的中文翻译", "structure": "用中文说明句子主干和从句/修饰结构，100 字以内", "notes": ["2 到 4 条值得学习的短语或语法点，每条一句话"]}""")
+            appendLine("""{"translation": "自然流畅的中文翻译（多句时按原文顺序完整翻译）", "structure": "用中文说明句子主干和从句/修饰结构；多句时只分析其中最难的一两句，150 字以内", "notes": ["2 到 4 条值得学习的短语或语法点，每条一句话"]}""")
         }
         return parse(provider.complete(SYSTEM_SENTENCE, user, 4000))
     }
