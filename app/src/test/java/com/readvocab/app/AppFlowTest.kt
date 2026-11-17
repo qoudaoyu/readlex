@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
@@ -15,6 +16,7 @@ import com.readvocab.app.ui.MainActivity
 import com.readvocab.core.srs.Rating
 import com.readvocab.core.vocab.VocabEstimator
 import com.readvocab.core.vocab.WordStatus
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -164,7 +166,19 @@ class AppFlowTest {
 
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()
-        compose.onNode(hasText("开始测试")).performClick()
+        // Today panel counts the word added and the paragraphs read.
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("today-card")).fetchSemanticsNodes().isNotEmpty() }
+        val today = runBlocking { container.stats.observe().first() }.today
+        assertEquals(1, today.added)
+        assertTrue("words read: ${today.wordsRead}", today.wordsRead > 0)
+        shot("1b-library-today")
+        compose.onNode(hasText("统计")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("学习统计")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        shot("7-stats")
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        compose.onNode(hasText("测词汇量")).performClick()
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("第 1 /", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
         shot("3-vocabtest")
@@ -179,5 +193,12 @@ class AppFlowTest {
         compose.onNode(hasText("设置")).performClick()
         compose.waitForIdle()
         shot("5-settings")
+        org.robolectric.Shadows.shadowOf(compose.activity.application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        compose.onNode(hasText("每天提醒我复习和阅读", substring = true)).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("20:00")).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(container.settings.current.reminderEnabled)
+        compose.onNode(hasText("从备份恢复")).performScrollTo()
+        compose.waitForIdle()
+        shot("5b-settings-backup")
     }
 }

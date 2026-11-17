@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,7 +58,9 @@ import androidx.lifecycle.viewModelScope
 import com.readvocab.app.AppContainer
 import com.readvocab.app.data.BookEntity
 import com.readvocab.app.ui.appViewModel
-import com.readvocab.core.vocab.WordStatus
+import com.readvocab.app.ui.formatCount
+import com.readvocab.app.ui.formatMinutes
+import com.readvocab.app.data.Stats
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -67,8 +71,7 @@ import kotlinx.coroutines.launch
 data class LibraryState(
     val books: List<BookEntity> = emptyList(),
     val vocabSize: Int = 0,
-    val dueCount: Int = 0,
-    val learningCount: Int = 0,
+    val stats: Stats? = null,
     val importing: Boolean = false,
 )
 
@@ -76,15 +79,8 @@ class LibraryViewModel(private val c: AppContainer) : ViewModel() {
     private val importing = MutableStateFlow(false)
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
-    val state = combine(c.books.observeBooks(), c.words.observeAll(), c.settings.settings, importing) { books, words, settings, imp ->
-        val now = System.currentTimeMillis()
-        LibraryState(
-            books = books,
-            vocabSize = settings.vocabSize,
-            dueCount = words.count { it.status.isInReview && it.due <= now },
-            learningCount = words.count { it.status == WordStatus.LEARNING || it.status == WordStatus.FAMILIAR },
-            importing = imp,
-        )
+    val state = combine(c.books.observeBooks(), c.stats.observe(), c.settings.settings, importing) { books, stats, settings, imp ->
+        LibraryState(books = books, vocabSize = settings.vocabSize, stats = stats, importing = imp)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LibraryState())
 
     private fun runImport(block: suspend () -> Long, onOpen: (Long) -> Unit) = viewModelScope.launch {
@@ -112,7 +108,7 @@ class LibraryViewModel(private val c: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview: () -> Unit) {
+fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview: () -> Unit, onStats: () -> Unit) {
     val vm = appViewModel { LibraryViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -154,7 +150,7 @@ fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview:
             contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { SummaryCard(state, onStartTest, onReview) }
+            item { TodayCard(state, onStartTest, onReview, onStats) }
             if (state.importing) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (state.books.isEmpty()) item {
                 Text("还没有书。点右下角导入一本你想读的英文书，或者用右上角粘贴一篇文章。", style = MaterialTheme.typography.bodyMedium)
@@ -196,22 +192,55 @@ fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview:
 }
 
 @Composable
-private fun SummaryCard(state: LibraryState, onStartTest: () -> Unit, onReview: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                if (state.vocabSize > 0) {
-                    Text("词汇量约 ${state.vocabSize}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                } else {
-                    Text("先测一下词汇量", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("5 分钟，用来决定阅读时标出哪些词", style = MaterialTheme.typography.bodySmall)
+private fun TodayCard(state: LibraryState, onStartTest: () -> Unit, onReview: () -> Unit, onStats: () -> Unit) {
+    val st = state.stats
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("today-card"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("今天", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (st != null && st.streak > 0) {
+                    Text("连续学习 ${st.streak} 天", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 }
-                Text("学习中 ${state.learningCount} 词 · 待复习 ${state.dueCount} 词", style = MaterialTheme.typography.bodySmall)
             }
-            Spacer(Modifier.width(8.dp))
-            if (state.vocabSize == 0) TextButton(onClick = onStartTest) { Text("开始测试") }
-            else if (state.dueCount > 0) TextButton(onClick = onReview) { Text("去复习") }
+            Row(Modifier.fillMaxWidth()) {
+                StatTile("待复习", st?.dueNow ?: 0, Modifier.weight(1f), emphasize = (st?.dueNow ?: 0) > 0)
+                StatTile("已复习", st?.today?.reviews ?: 0, Modifier.weight(1f))
+                StatTile("新词", st?.today?.added ?: 0, Modifier.weight(1f))
+                StatTile("阅读词数", st?.today?.wordsRead ?: 0, Modifier.weight(1f), sub = st?.today?.let { formatMinutes(it.seconds) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    buildString {
+                        append(if (state.vocabSize > 0) "词汇量约 ${state.vocabSize}" else "还没测词汇量")
+                        if (st != null) append(" · 生词表 ${st.inList} 词")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onStats) { Text("统计") }
+                when {
+                    state.vocabSize == 0 -> TextButton(onClick = onStartTest) { Text("测词汇量") }
+                    (st?.dueNow ?: 0) > 0 -> Button(onClick = onReview) { Text("去复习") }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun StatTile(label: String, value: Int, modifier: Modifier, emphasize: Boolean = false, sub: String? = null) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            formatCount(value),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = if (emphasize) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        if (sub != null) Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

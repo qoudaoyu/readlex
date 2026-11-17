@@ -1,5 +1,10 @@
 package com.readvocab.app.ui.settings
 
+import android.Manifest
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -14,7 +19,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -31,12 +40,16 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -46,6 +59,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.readvocab.app.AppContainer
 import com.readvocab.app.data.AppSettings
+import com.readvocab.app.data.BackupException
+import com.readvocab.app.data.BackupManager
+import com.readvocab.app.reminder.Reminders
 import com.readvocab.app.ui.Async
 import com.readvocab.app.ui.appViewModel
 import com.readvocab.core.ai.AiConfig
@@ -63,6 +79,35 @@ import kotlinx.coroutines.withContext
 class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     val settings = c.settings.settings
     val test = MutableStateFlow<Async<String>>(Async.Idle)
+    val backup = MutableStateFlow<Async<String>>(Async.Idle)
+    val lastBackupAt = MutableStateFlow(c.backup.lastBackupAt)
+    /** Set after a successful restore; the screen then restarts the app. */
+    val restored = MutableStateFlow(false)
+
+    fun exportBackup(uri: Uri) = runBackup {
+        val r = c.backup.export(uri)
+        lastBackupAt.value = r.createdAt
+        "已备份 ${r.books} 本书、${r.words} 个词的记录"
+    }
+
+    fun restoreBackup(uri: Uri) = runBackup {
+        c.backup.restore(uri)
+        restored.value = true
+        "恢复完成，正在重启…"
+    }
+
+    private fun runBackup(block: suspend () -> String) {
+        backup.value = Async.Loading
+        viewModelScope.launch {
+            backup.value = try {
+                Async.Done(block())
+            } catch (e: BackupException) {
+                Async.Failed(e.message ?: "操作失败")
+            } catch (e: Exception) {
+                Async.Failed("操作失败：${e.message}")
+            }
+        }
+    }
 
     fun update(f: (AppSettings) -> AppSettings) { c.settings.update(f); test.value = Async.Idle }
 
@@ -96,7 +141,25 @@ fun SettingsScreen(onStartTest: () -> Unit) {
     val vm = appViewModel { SettingsViewModel(it) }
     val s by vm.settings.collectAsStateWithLifecycle()
     val test by vm.test.collectAsStateWithLifecycle()
+    val backup by vm.backup.collectAsStateWithLifecycle()
+    val lastBackupAt by vm.lastBackupAt.collectAsStateWithLifecycle()
+    val restored by vm.restored.collectAsStateWithLifecycle()
     var showKey by remember { mutableStateOf(false) }
+    var pickTime by remember { mutableStateOf(false) }
+    var confirmRestore by remember { mutableStateOf<Uri?>(null) }
+    val context = LocalContext.current
+
+    LaunchedEffect(restored) { if (restored) BackupManager.restartApp(context) }
+
+    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        vm.update { it.copy(reminderEnabled = granted) }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) vm.exportBackup(uri)
+    }
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) confirmRestore = uri
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("设置") }) }) { padding ->
         Column(
@@ -186,6 +249,51 @@ fun SettingsScreen(onStartTest: () -> Unit) {
             ) { v -> vm.update { it.copy(autoKnownAfter = if (v) 3 else 0) } }
 
             HorizontalDivider()
+            Text("每日提醒", style = MaterialTheme.typography.titleMedium)
+            SwitchRow(
+                "每天提醒我复习和阅读",
+                "有到期的词时提醒复习；没有的话，当天还没读过才提醒",
+                s.reminderEnabled,
+            ) { v ->
+                if (v && !Reminders.canNotify(context) && Build.VERSION.SDK_INT >= 33) {
+                    notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    vm.update { it.copy(reminderEnabled = v) }
+                }
+            }
+            if (s.reminderEnabled) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("提醒时间", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    OutlinedButton(onClick = { pickTime = true }) {
+                        Text("%02d:%02d".format(s.reminderMinuteOfDay / 60, s.reminderMinuteOfDay % 60))
+                    }
+                }
+            }
+
+            HorizontalDivider()
+            Text("数据备份", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "书籍、生词、复习记录和阅读设置都只保存在这台手机上。备份成一个文件，存到网盘或电脑，换手机时可以恢复。备份里不含 API Key。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                if (lastBackupAt > 0) "上次备份：${formatDateTime(lastBackupAt)}" else "还没有备份过",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { exportLauncher.launch(BackupManager.defaultFileName()) }, enabled = backup != Async.Loading) { Text("备份到文件") }
+                OutlinedButton(onClick = { restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }, enabled = backup != Async.Loading) {
+                    Text("从备份恢复")
+                }
+            }
+            when (val b = backup) {
+                Async.Loading -> Text("处理中…", style = MaterialTheme.typography.bodySmall)
+                is Async.Done -> Text(b.value, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                is Async.Failed -> Text(b.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                else -> Unit
+            }
+
+            HorizontalDivider()
             Text("词汇量", style = MaterialTheme.typography.titleMedium)
             Text(
                 if (s.vocabSize > 0) "测试结果约 ${s.vocabSize} 词；词频前 ${s.knownBoundary} 的词默认视为已认识。"
@@ -198,15 +306,47 @@ fun SettingsScreen(onStartTest: () -> Unit) {
             Text("词典数据来自开源项目 ECDICT（MIT 许可）。", style = MaterialTheme.typography.bodySmall)
         }
     }
+
+    if (pickTime) {
+        val state = rememberTimePickerState(s.reminderMinuteOfDay / 60, s.reminderMinuteOfDay % 60, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { pickTime = false },
+            title = { Text("提醒时间") },
+            text = { TimePicker(state) },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.update { it.copy(reminderMinuteOfDay = state.hour * 60 + state.minute) }
+                    pickTime = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { pickTime = false }) { Text("取消") } },
+        )
+    }
+    confirmRestore?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { confirmRestore = null },
+            title = { Text("从备份恢复？") },
+            text = { Text("这台手机上现有的书籍、生词和复习记录会被备份里的内容替换。AI 设置和 API Key 保持不变。恢复后 App 会自动重启。") },
+            confirmButton = { TextButton(onClick = { vm.restoreBackup(uri); confirmRestore = null }) { Text("恢复") } },
+            dismissButton = { TextButton(onClick = { confirmRestore = null }) { Text("取消") } },
+        )
+    }
 }
+
+private fun formatDateTime(ms: Long): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
 @Composable
 private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    // The whole row toggles, not just the small switch.
+    Row(
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(subtitle, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }

@@ -1,5 +1,6 @@
 package com.readvocab.app.ui
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,7 +17,10 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -26,7 +30,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.readvocab.app.reminder.Reminders
 import com.readvocab.app.ui.library.LibraryScreen
+import com.readvocab.app.ui.stats.StatsScreen
 import com.readvocab.app.ui.reader.ReaderScreen
 import com.readvocab.app.ui.review.ReviewScreen
 import com.readvocab.app.ui.settings.SettingsScreen
@@ -44,15 +50,24 @@ private val TABS = listOf(
 )
 
 class MainActivity : ComponentActivity() {
+    /** Tab requested by a notification tap; consumed by the nav host. */
+    private val requestedTab = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { ReadVocabTheme { AppNav() } }
+        if (savedInstanceState == null) requestedTab.value = intent?.getStringExtra(Reminders.EXTRA_TAB)
+        setContent { ReadVocabTheme { AppNav(requestedTab) } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        requestedTab.value = intent.getStringExtra(Reminders.EXTRA_TAB)
     }
 }
 
 @Composable
-private fun AppNav() {
+private fun AppNav(requestedTab: MutableState<String?>) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
@@ -62,6 +77,12 @@ private fun AppNav() {
         popUpTo(nav.graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
+    }
+
+    LaunchedEffect(requestedTab.value) {
+        val tab = requestedTab.value ?: return@LaunchedEffect
+        requestedTab.value = null
+        if (TABS.any { it.route == tab }) goTab(tab)
     }
 
     Scaffold(
@@ -84,11 +105,13 @@ private fun AppNav() {
                     onOpenBook = { nav.navigate("reader/$it") },
                     onStartTest = { nav.navigate("vocabtest") },
                     onReview = { goTab("review") },
+                    onStats = { nav.navigate("stats") },
                 )
             }
             composable("review") { ReviewScreen(onOpenBook = { nav.navigate("reader/$it") }) }
             composable("words") { WordbookScreen() }
             composable("settings") { SettingsScreen(onStartTest = { nav.navigate("vocabtest") }) }
+            composable("stats") { StatsScreen(onBack = { nav.popBackStack() }) }
             composable("vocabtest") { VocabTestScreen(onDone = { nav.popBackStack() }) }
             composable("reader/{bookId}", arguments = listOf(navArgument("bookId") { type = NavType.LongType })) {
                 ReaderScreen(bookId = it.arguments!!.getLong("bookId"), onBack = { nav.popBackStack() })

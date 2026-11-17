@@ -21,7 +21,6 @@ class WordRepository(private val db: AppDatabase) {
 
     fun observeAll(): Flow<List<WordEntity>> = words.observeAll()
     fun observeByStatus(statuses: List<WordStatus>) = words.observeByStatus(statuses)
-    fun observeReviewsSince(since: Long) = log.observeCountSince(since)
 
     suspend fun get(lemma: String) = words.get(lemma)
     suspend fun encounters(lemma: String) = encounters.forLemma(lemma)
@@ -64,12 +63,13 @@ class WordRepository(private val db: AppDatabase) {
         val updated = if (existing.status.isInReview) existing
         else existing.withMemory(fsrs.review(MemoryState(), Rating.Again, now), now).copy(lookups = existing.lookups + 1)
         words.upsert(updated)
+        if (!existing.status.isInReview) logAdd(lemma, now)
         addEncounter(lemma, surface, sentence, bookId, bookTitle, now)
         if (!aiMeaning.isNullOrBlank()) encounters.setAiMeaning(lemma, sentence, aiMeaning)
         updated
     }
 
-    suspend fun setStatus(lemma: String, status: WordStatus) {
+    suspend fun setStatus(lemma: String, status: WordStatus) = db.withTransaction {
         val now = System.currentTimeMillis()
         val existing = words.get(lemma) ?: newEntity(lemma, now)
         val updated = when (status) {
@@ -77,7 +77,11 @@ class WordRepository(private val db: AppDatabase) {
             else -> existing.copy(status = status, updatedAt = now)
         }
         words.upsert(updated)
+        if (status == WordStatus.LEARNING && !existing.status.isInReview) logAdd(lemma, now)
     }
+
+    private suspend fun logAdd(lemma: String, now: Long) =
+        log.insert(ReviewLogEntity(lemma = lemma, rating = Rating.Again.value, source = ReviewSource.ADD, at = now))
 
     suspend fun saveAiMeaning(lemma: String, sentence: String, meaning: String) = encounters.setAiMeaning(lemma, sentence, meaning)
 

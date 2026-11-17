@@ -34,3 +34,15 @@ sealed interface Async<out T> {
     data class Done<T>(val value: T) : Async<T>
     data class Failed(val message: String) : Async<Nothing>
 }
+
+/** 1234 → "1,234"; 12345 → "1.2万". */
+fun formatCount(n: Int): String = when {
+    n >= 10_000 -> String.format(java.util.Locale.US, "%.1f万", n / 10_000.0).replace(".0万", "万")
+    else -> String.format(java.util.Locale.US, "%,d", n)
+}
+
+fun formatMinutes(seconds: Long): String = when {
+    seconds < 60 -> if (seconds == 0L) "0 分钟" else "不到 1 分钟"
+    seconds < 3600 -> "${seconds / 60} 分钟"
+    else -> "${seconds / 3600} 小时 ${seconds % 3600 / 60} 分"
+}
