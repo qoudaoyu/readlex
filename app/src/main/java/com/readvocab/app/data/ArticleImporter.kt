@@ -9,7 +9,10 @@ import org.json.JSONObject
 import java.net.URL
 
 /** What Readability found on a page. */
-data class ExtractedArticle(val title: String, val byline: String, val siteName: String, val text: String, val url: String) {
+data class ExtractedArticle(
+    val title: String, val byline: String, val siteName: String, val text: String, val url: String,
+    val excerpt: String = "", val publishedAt: Long = 0,
+) {
     val wordCount: Int get() = Tokenizer.countWords(text)
 }
 
@@ -45,6 +48,8 @@ class ArticleImporter(private val context: Context, private val books: BookRepos
             siteName = o.optString("siteName").trim(),
             text = text,
             url = o.optString("url"),
+            excerpt = standfirst(o.optString("excerpt"), text),
+            publishedAt = parseTime(o.optString("publishedTime")),
         )
         if (article.wordCount < MIN_WORDS) {
             throw ImportException("只找到 ${article.wordCount} 个词的正文。可能需要登录或订阅才能看到全文，或者这不是文章页。")
@@ -58,8 +63,28 @@ class ArticleImporter(private val context: Context, private val books: BookRepos
         val site = article.siteName.ifBlank { runCatching { URL(article.url).host.removePrefix("www.") }.getOrDefault("") }
         val author = listOf(site, article.byline).filter { it.isNotBlank() }.joinToString(" · ")
         val title = article.title.ifBlank { site }
-        return books.importText(title, "# $title\n\n${article.text}", author, BookEntity.KIND_ARTICLE, article.url)
+        return books.importText(
+            title, "# $title\n\n${article.text}", author, BookEntity.KIND_ARTICLE, article.url, article.excerpt, article.publishedAt,
+        )
     }
+
+    /**
+     * The page's summary, used as a standfirst under the headline. Readability falls back to the
+     * first paragraph when a page has no summary; repeating it would just duplicate the opening.
+     */
+    private fun standfirst(excerpt: String, body: String): String {
+        val e = excerpt.replace(Regex("\\s+"), " ").trim()
+        if (e.length !in 20..300) return ""
+        val first = body.lineSequence().firstOrNull { it.isNotBlank() && !it.startsWith("#") }.orEmpty()
+        fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        val ne = norm(e).removeSuffix(" ")
+        val nf = norm(first)
+        return if (nf.startsWith(ne.take(60)) || ne.startsWith(nf.take(60))) "" else e
+    }
+
+    private fun parseTime(s: String): Long = runCatching { java.time.OffsetDateTime.parse(s.trim()).toInstant().toEpochMilli() }
+        .recoverCatching { java.time.Instant.parse(s.trim()).toEpochMilli() }
+        .getOrDefault(0)
 
     companion object {
         const val MIN_WORDS = 120

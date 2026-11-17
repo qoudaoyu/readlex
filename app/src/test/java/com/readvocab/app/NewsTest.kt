@@ -42,6 +42,7 @@ class NewsTest {
         assertFalse("navigation dropped", article.text.contains("Business"))
         assertTrue(article.text.trimEnd().endsWith("continue to get hotter.\""))
         assertEquals(5, article.text.split("\n\n").size)
+        assertEquals("an excerpt that repeats the first paragraph is not a standfirst", "", article.excerpt)
 
         val id = c.articles.save(article)
         val book = c.books.get(id)!!
@@ -77,6 +78,8 @@ class NewsTest {
         }
         assertTrue(paras.last().startsWith("Similar schemes"))
         assertEquals(11, paras.size)
+        assertEquals("Instead of higher walls, one town will pay farmers up the valley to plant trees.", a.excerpt)
+        assertEquals(java.time.Instant.parse("2026-11-17T06:12:00Z").toEpochMilli(), a.publishedAt)
     }
 
     @Test fun frontPageIsRejected() {
@@ -179,6 +182,8 @@ class NewsTest {
         val room = Room.databaseBuilder(app, AppDatabase::class.java, file.path)
             .addMigrations(*AppDatabase.ALL_MIGRATIONS).build()
         assertEquals("", room.books().get(1)!!.sourceUrl)
+        assertEquals("", room.books().get(1)!!.excerpt)
+        assertEquals(0L, room.books().get(1)!!.publishedAt)
         assertTrue(room.feeds().enabledFeeds().isEmpty())
         room.close()
     }

@@ -32,10 +32,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun feeds(): FeedDao
 
     companion object {
-        const val VERSION = 4
+        const val VERSION = 5
         const val NAME = "readvocab.db"
 
-        val ALL_MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        val ALL_MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         fun create(context: Context, name: String = NAME): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
@@ -68,6 +68,14 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `feed_items` (`link` TEXT NOT NULL, `feedUrl` TEXT NOT NULL, `title` TEXT NOT NULL, `summary` TEXT NOT NULL, `publishedAt` INTEGER NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`link`))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_feed_items_feedUrl` ON `feed_items` (`feedUrl`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_feed_items_publishedAt` ON `feed_items` (`publishedAt`)")
+            }
+        }
+
+        /** Article standfirst and publication date, for the magazine-style article header. */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN excerpt TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE books ADD COLUMN publishedAt INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

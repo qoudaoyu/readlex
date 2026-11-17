@@ -84,6 +84,10 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
 
     val settings: StateFlow<AppSettings> = c.settings.settings
 
+    /** Share of this book's words the reader knows, for the article header. */
+    val coverage: StateFlow<Double?> = c.coverage.observe().map { it[bookId] }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     val statuses: StateFlow<Map<String, WordStatus>> = c.words.observeAll()
         .map { list -> list.associate { it.lemma to it.status } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())

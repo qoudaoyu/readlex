@@ -237,9 +237,18 @@ class AppFlowTest {
         compose.onNode(hasText("书架")).performClick()
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Why river towns", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onAllNodes(hasText("Why river towns", substring = true))[0].performClick()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText("A cheaper defence?")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("Instead of higher walls", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
+        compose.onNode(hasText("17 Nov 2026", substring = true)).assertExists()
         shot("10-article")
+
+        // Night mode from the "Aa" sheet, kept in settings.
+        compose.onNode(hasContentDescription("字号和夜间模式")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("夜间")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasText("夜间")).performClick()
+        compose.waitForIdle()
+        assertEquals("DARK", container.settings.settings.value.readerTheme)
+        shot("11-article-night") // the sheet is its own window, so the shot shows the page under it
         assertTrue(articleId > 0)
     }
 }

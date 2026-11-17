@@ -21,6 +21,10 @@ data class BookEntity(
     val kind: String = KIND_BOOK,
     /** Page an article was imported from; empty for books and stories. */
     val sourceUrl: String = "",
+    /** An article's standfirst (the page's own summary), shown under the headline. */
+    val excerpt: String = "",
+    /** When an article was published (epoch ms), 0 if unknown. */
+    val publishedAt: Long = 0,
 ) {
     val isStory: Boolean get() = kind == KIND_STORY
     val isArticle: Boolean get() = kind == KIND_ARTICLE

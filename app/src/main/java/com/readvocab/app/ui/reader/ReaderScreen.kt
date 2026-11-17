@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
-import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -79,6 +78,24 @@ import com.readvocab.app.ui.theme.HighlightColors
 import com.readvocab.core.vocab.Highlight
 import com.readvocab.core.vocab.HighlightMode
 import java.util.Locale
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.readvocab.app.data.BookEntity
+import com.readvocab.core.vocab.Coverage
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,10 +107,12 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     val lookup by vm.lookup.collectAsStateWithLifecycle()
     val sentence by vm.sentence.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
+    val coverage by vm.coverage.collectAsStateWithLifecycle()
+    var showStyle by remember { mutableStateOf(false) }
     val layouts = remember { HashMap<Int, TextLayoutResult>() }
     val density = LocalDensity.current
     val horizontalPadPx = with(density) { READER_H_PADDING.toPx() }
-    val quotePadPx = with(density) { QUOTE_PAD.toPx() }
+    val quotePadPx = with(density) { QUOTE_TOP.toPx() }
     val headingPadPx = with(density) { HEADING_PAD.toPx() }
     val snackbar = remember { SnackbarHostState() }
     var showChapters by remember { mutableStateOf(false) }
@@ -141,7 +160,17 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
         }.collect { (read, first) -> vm.onRead(read, first) }
     }
 
-    val dark = isSystemInDarkTheme()
+    val systemDark = isSystemInDarkTheme()
+    val colors = when (readerTheme(settings.readerTheme)) {
+        ReaderTheme.SYSTEM -> if (systemDark) ReaderDark else ReaderLight
+        ReaderTheme.LIGHT -> ReaderLight
+        ReaderTheme.DARK -> ReaderDark
+    }
+    val dark = colors.dark
+    val book = state.book
+    // Articles and AI stories get the magazine header: kicker, headline, standfirst, meta bar.
+    val magazine = book != null && (book.isArticle || book.isStory) && state.chapters.size <= 1
+    val ledeIndex = if (magazine) state.paragraphs.indexOfFirst { it.kind == ParaMarkup.Kind.BODY } else -1
     val highlightFor = remember(statuses, settings.knownBoundary, settings.highlightMode) {
         { lemma: String -> vm.highlight(lemma, statuses, settings) }
     }
@@ -149,11 +178,19 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     val chapterTitle = if (state.chapters.size > 1) state.chapters.getOrNull(state.chapterIndex)?.title.orEmpty() else ""
 
     Scaffold(
+        containerColor = colors.background,
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = colors.background,
+                    titleContentColor = colors.text,
+                    navigationIconContentColor = colors.text,
+                    actionIconContentColor = colors.text,
+                ),
                 title = {
                     Column {
-                        Text(state.book?.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val barTitle = if (magazine) siteOf(book!!.author).ifBlank { book.title } else book?.title.orEmpty()
+                        Text(barTitle, style = MaterialTheme.typography.titleMedium.copy(fontFamily = ReaderSans, fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (chapterTitle.isNotEmpty()) Text(chapterTitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 },
@@ -166,9 +203,9 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
                     }) {
                         Icon(if (settings.highlightMode == HighlightMode.ALL) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff, "切换生词高亮")
                     }
-                    IconButton(onClick = {
-                        app.container.settings.update { it.copy(fontSizeSp = if (it.fontSizeSp >= 24) 16 else it.fontSizeSp + 2) }
-                    }) { Icon(Icons.Outlined.TextFields, "字号") }
+                    IconButton(onClick = { showStyle = true }) {
+                        Text("Aa", fontFamily = ReaderSerif, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "字号和夜间模式" })
+                    }
                     IconButton(onClick = { showChapters = true }) { Icon(Icons.AutoMirrored.Outlined.List, "目录") }
                 },
             )
@@ -199,9 +236,15 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             val layout = layouts[paraIndex] ?: return null
             if (paraIndex !in state.paragraphs.indices) return null
             val kind = state.paragraphs[paraIndex].kind
-            val dx = if (kind == ParaMarkup.Kind.QUOTE) quotePadPx else 0f
-            val dy = if (kind == ParaMarkup.Kind.HEADING) headingPadPx else 0f
-            return paraIndex to layout.getOffsetForPosition(Offset(pos.x - horizontalPadPx - dx, y - item.offset - dy))
+            val dy = when (kind) {
+                ParaMarkup.Kind.QUOTE -> quotePadPx
+                ParaMarkup.Kind.HEADING -> headingPadPx
+                else -> 0f
+            }
+            val inText = y - item.offset - dy
+            // Below the text (the standfirst and meta bar under a headline) is not a word.
+            if (inText < 0 || inText > layout.size.height) return null
+            return paraIndex to layout.getOffsetForPosition(Offset(pos.x - horizontalPadPx, inText))
         }
         LazyColumn(
             state = listState,
@@ -214,15 +257,22 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
                     onMove = { pos -> hit(pos)?.let { (p, o) -> vm.extendSelection(p, o) } },
                 ),
             contentPadding = PaddingValues(horizontal = READER_H_PADDING, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy((settings.fontSizeSp * 0.9f).dp),
         ) {
-            // Item 0: the chapter name, or for an article its source and author above the headline.
+            // Item 0: the chapter name, or for an article the kicker (its source) above the headline.
             item {
-                val book = state.book
                 when {
-                    chapterTitle.isNotEmpty() -> Text(chapterTitle, style = MaterialTheme.typography.headlineSmall)
-                    book != null && (book.isArticle || book.isStory) && book.author.isNotBlank() ->
-                        Text(book.author, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    chapterTitle.isNotEmpty() -> Text(
+                        chapterTitle,
+                        fontFamily = ReaderSerif, fontWeight = FontWeight.Bold, fontSize = (settings.fontSizeSp * 1.35f).sp,
+                        lineHeight = (settings.fontSizeSp * 1.7f).sp, color = colors.heading,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    magazine && siteOf(book!!.author).isNotBlank() -> Text(
+                        siteOf(book.author).uppercase(),
+                        fontFamily = ReaderSans, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, letterSpacing = 1.4.sp,
+                        color = colors.accent, modifier = Modifier.padding(top = 12.dp),
+                    )
                     else -> Spacer(Modifier.height(0.dp))
                 }
             }
@@ -232,20 +282,25 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
                     val idx = para.sentences.indices.filter { sel.contains(SentencePos(i, it)) }
                     if (idx.isEmpty()) emptyList() else listOf(para.sentences[idx.first()].first..para.sentences[idx.last()].last)
                 } ?: emptyList()
-                ParagraphText(
-                    para = para,
-                    fontSizeSp = settings.fontSizeSp,
-                    dark = dark,
-                    highlightFor = highlightFor,
-                    selected = selected,
-                    onLayout = { layouts[i] = it },
-                    onTap = { vm.onTap(i, it) },
-                )
+                Column {
+                    ParagraphText(
+                        para = para,
+                        fontSizeSp = settings.fontSizeSp,
+                        colors = colors,
+                        lede = i == ledeIndex,
+                        highlightFor = highlightFor,
+                        selected = selected,
+                        onLayout = { layouts[i] = it },
+                        onTap = { vm.onTap(i, it) },
+                    )
+                    if (magazine && i == 0 && para.kind == ParaMarkup.Kind.TITLE) ArticleHeader(book!!, coverage, colors)
+                }
             }
             item {
                 Row(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    if (state.chapters.size <= 1) return@Row
                     OutlinedButton(enabled = state.chapterIndex > 0, onClick = { vm.goToChapter(state.chapterIndex - 1) }) { Text("上一章") }
-                    Text("${state.chapterIndex + 1} / ${state.chapters.size}", Modifier.align(Alignment.CenterVertically))
+                    Text("${state.chapterIndex + 1} / ${state.chapters.size}", Modifier.align(Alignment.CenterVertically), color = colors.muted)
                     OutlinedButton(enabled = state.chapterIndex < state.chapters.size - 1, onClick = { vm.goToChapter(state.chapterIndex + 1) }) { Text("下一章") }
                 }
             }
@@ -265,6 +320,15 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
         )
     }
     sentence?.let { s -> SentenceSheet(s, onDismiss = vm::dismissSentence, onRetry = vm::explainSentence, onSpeak = speak) }
+    if (showStyle) {
+        ReaderStyleSheet(
+            fontSizeSp = settings.fontSizeSp,
+            theme = readerTheme(settings.readerTheme),
+            onFontSize = { v -> app.container.settings.update { it.copy(fontSizeSp = v) } },
+            onTheme = { t -> app.container.settings.update { it.copy(readerTheme = t.name) } },
+            onDismiss = { showStyle = false },
+        )
+    }
 
     if (showChapters) {
         AlertDialog(
@@ -288,8 +352,12 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
 }
 
 private val READER_H_PADDING = 20.dp
-private val QUOTE_PAD = 16.dp
-private val HEADING_PAD = 8.dp
+/** Space above a quotation for its rule; above a subheading for breathing room. */
+private val QUOTE_TOP = 18.dp
+private val HEADING_PAD = 12.dp
+
+/** "BBC News · Jane Doe" → "BBC News". */
+private fun siteOf(author: String) = author.substringBefore(" · ").trim()
 
 /**
  * Long-press then drag to select sentences. Watches the Initial pass so that, once the long press
@@ -324,16 +392,24 @@ private fun Modifier.sentenceSelectionGesture(onStart: (Offset) -> Unit, onMove:
 private fun ParagraphText(
     para: Para,
     fontSizeSp: Int,
-    dark: Boolean,
+    colors: ReaderColors,
+    lede: Boolean,
     highlightFor: (String) -> Highlight,
     selected: List<IntRange>,
     onLayout: (TextLayoutResult) -> Unit,
     onTap: (Int) -> Unit,
 ) {
-    val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-    val annotated = remember(para, highlightFor, dark, selected, selectionColor) {
+    val dark = colors.dark
+    val selectionColor = colors.accent.copy(alpha = 0.18f)
+    // Uppercase a subheading only when that keeps every offset where the tokens expect it.
+    val shown = if (para.kind == ParaMarkup.Kind.HEADING) para.text.uppercase().takeIf { it.length == para.text.length } ?: para.text else para.text
+    val annotated = remember(para, shown, highlightFor, colors, selected, lede, fontSizeSp) {
         buildAnnotatedString {
-            append(para.text)
+            append(shown)
+            // The opening paragraph of an article starts with a raised initial in the accent colour.
+            if (lede && shown.isNotEmpty() && shown[0].isLetter()) {
+                addStyle(SpanStyle(fontSize = (fontSizeSp * 2.4f).sp, fontWeight = FontWeight.Bold, color = colors.accent), 0, 1)
+            }
             for (r in selected) addStyle(SpanStyle(background = selectionColor), r.first, r.last + 1)
             for (t in para.tokens) {
                 val style = when (highlightFor(t.lemma)) {
@@ -348,22 +424,107 @@ private fun ParagraphText(
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val currentOnTap by rememberUpdatedState(onTap)
-    val base = TextStyle(fontSize = fontSizeSp.sp, lineHeight = (fontSizeSp * 1.6f).sp, color = MaterialTheme.colorScheme.onSurface)
+    val base = TextStyle(fontFamily = ReaderSerif, fontSize = fontSizeSp.sp, lineHeight = (fontSizeSp * 1.65f).sp, color = colors.text)
     val style = when (para.kind) {
-        ParaMarkup.Kind.TITLE -> base.copy(fontSize = (fontSizeSp * 1.45f).sp, lineHeight = (fontSizeSp * 1.9f).sp, fontWeight = FontWeight.SemiBold)
-        ParaMarkup.Kind.HEADING -> base.copy(fontSize = (fontSizeSp * 1.15f).sp, lineHeight = (fontSizeSp * 1.7f).sp, fontWeight = FontWeight.SemiBold)
-        ParaMarkup.Kind.QUOTE -> base.copy(fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ParaMarkup.Kind.TITLE -> base.copy(fontWeight = FontWeight.Bold, fontSize = (fontSizeSp * 1.7f).sp, lineHeight = (fontSizeSp * 2.05f).sp, letterSpacing = (-0.2).sp, color = colors.heading)
+        ParaMarkup.Kind.HEADING -> base.copy(fontFamily = ReaderSans, fontWeight = FontWeight.SemiBold, fontSize = (fontSizeSp * 0.75f).sp, lineHeight = (fontSizeSp * 1.2f).sp, letterSpacing = (fontSizeSp * 0.075f).sp, color = colors.accent)
+        ParaMarkup.Kind.QUOTE -> base.copy(fontStyle = FontStyle.Italic, fontSize = (fontSizeSp * 1.2f).sp, lineHeight = (fontSizeSp * 1.65f).sp, color = colors.heading)
         ParaMarkup.Kind.BODY -> base
+    }
+    val decoration = when (para.kind) {
+        ParaMarkup.Kind.QUOTE -> Modifier
+            .drawBehind {
+                drawRect(colors.strongRule, size = Size(size.width, 2.dp.toPx()))
+                drawRect(colors.rule, topLeft = Offset(0f, size.height - 1.dp.toPx()), size = Size(size.width, 1.dp.toPx()))
+            }
+            .padding(top = QUOTE_TOP, bottom = 14.dp)
+        ParaMarkup.Kind.HEADING -> Modifier.padding(top = HEADING_PAD)
+        else -> Modifier
     }
     Text(
         text = annotated,
         style = style,
         onTextLayout = { layout = it; onLayout(it) },
         modifier = Modifier.fillMaxWidth()
-            .then(if (para.kind == ParaMarkup.Kind.QUOTE) Modifier.padding(start = QUOTE_PAD) else Modifier)
-            .then(if (para.kind == ParaMarkup.Kind.HEADING) Modifier.padding(top = HEADING_PAD) else Modifier)
+            .then(decoration)
             .pointerInput(para) {
-            detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
-        },
+                detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
+            },
     )
+}
+
+/** Under an article's headline: the standfirst in italics, then a ruled bar with byline, date, length and coverage. */
+@Composable
+private fun ArticleHeader(book: BookEntity, coverage: Double?, colors: ReaderColors) {
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        if (book.excerpt.isNotBlank()) {
+            Text(
+                book.excerpt,
+                fontFamily = ReaderSerif, fontStyle = FontStyle.Italic, fontSize = 18.sp, lineHeight = 27.sp,
+                color = colors.muted, modifier = Modifier.padding(bottom = 16.dp),
+            )
+        }
+        HorizontalDivider(color = colors.rule, thickness = 1.dp)
+        val meta = buildList {
+            book.author.substringAfter(" · ", "").trim().takeIf { it.isNotEmpty() }?.let(::add)
+            if (book.publishedAt > 0) add(formatDate(book.publishedAt))
+            add("约 %,d 词 · %d 分钟".format(book.wordCount, readingMinutes(book.wordCount)))
+        }.joinToString(" · ")
+        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(meta, fontFamily = ReaderSans, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, lineHeight = 18.sp, color = colors.muted, modifier = Modifier.weight(1f))
+            if (coverage != null) {
+                val level = Coverage.level(coverage)
+                val (bg, fg) = coverageChipColors(level, colors.dark)
+                Text(
+                    "认识 ${(coverage * 100).toInt()}% · ${level.label}",
+                    fontFamily = ReaderSans, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = fg,
+                    modifier = Modifier.padding(start = 10.dp).background(bg, RoundedCornerShape(50)).padding(horizontal = 9.dp, vertical = 3.dp),
+                )
+            }
+        }
+        HorizontalDivider(color = colors.rule, thickness = 1.dp)
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+private fun formatDate(millis: Long): String =
+    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+        .format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH))
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderStyleSheet(
+    fontSizeSp: Int,
+    theme: ReaderTheme,
+    onFontSize: (Int) -> Unit,
+    onTheme: (ReaderTheme) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 32.dp)) {
+            Text("字号 $fontSizeSp", style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("A", fontFamily = ReaderSerif, fontSize = 14.sp)
+                Slider(
+                    value = fontSizeSp.toFloat(),
+                    onValueChange = { onFontSize(it.roundToInt()) },
+                    valueRange = 15f..24f, steps = 8,
+                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp).testTag("font-size"),
+                )
+                Text("A", fontFamily = ReaderSerif, fontSize = 24.sp)
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("配色", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                ReaderTheme.entries.forEachIndexed { i, t ->
+                    SegmentedButton(
+                        selected = t == theme,
+                        onClick = { onTheme(t) },
+                        shape = SegmentedButtonDefaults.itemShape(i, ReaderTheme.entries.size),
+                    ) { Text(t.label) }
+                }
+            }
+        }
+    }
 }

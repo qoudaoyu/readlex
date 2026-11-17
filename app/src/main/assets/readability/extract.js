@@ -54,6 +54,8 @@
       title: a.title || document.title || "",
       byline: byline,
       siteName: a.siteName || "",
+      excerpt: a.excerpt || "",
+      publishedTime: a.publishedTime || "",
       content: a.content || "",
       blocks: blocks,
       url: location.href

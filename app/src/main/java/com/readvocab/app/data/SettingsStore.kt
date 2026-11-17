@@ -31,6 +31,8 @@ data class AppSettings(
     val reminderEnabled: Boolean = false,
     val reminderMinuteOfDay: Int = 20 * 60,
     val lastNewsRefresh: Long = 0,
+    /** Reader page colors: "SYSTEM" follows the phone, or "LIGHT" / "DARK". */
+    val readerTheme: String = "SYSTEM",
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
 
@@ -71,6 +73,7 @@ class SettingsStore(context: Context) {
             reminderEnabled = prefs.getBoolean("reminderEnabled", d.reminderEnabled),
             reminderMinuteOfDay = prefs.getInt("reminderMinuteOfDay", d.reminderMinuteOfDay),
             lastNewsRefresh = prefs.getLong("lastNewsRefresh", 0),
+            readerTheme = prefs.getString("readerTheme", d.readerTheme)!!,
         )
     }
 
@@ -93,6 +96,7 @@ class SettingsStore(context: Context) {
             .putBoolean("reminderEnabled", s.reminderEnabled)
             .putInt("reminderMinuteOfDay", s.reminderMinuteOfDay)
             .putLong("lastNewsRefresh", s.lastNewsRefresh)
+            .putString("readerTheme", s.readerTheme)
             .apply()
         _settings.value = s
     }
