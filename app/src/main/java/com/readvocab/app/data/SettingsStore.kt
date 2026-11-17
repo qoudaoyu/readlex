@@ -33,6 +33,8 @@ data class AppSettings(
     val lastNewsRefresh: Long = 0,
     /** Reader page colors: "SYSTEM" follows the phone, or "LIGHT" / "DARK". */
     val readerTheme: String = "SYSTEM",
+    /** Which set of built-in news feeds has been offered; later sets are added once to existing lists. */
+    val feedDefaults: Int = 0,
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
 
@@ -74,6 +76,7 @@ class SettingsStore(context: Context) {
             reminderMinuteOfDay = prefs.getInt("reminderMinuteOfDay", d.reminderMinuteOfDay),
             lastNewsRefresh = prefs.getLong("lastNewsRefresh", 0),
             readerTheme = prefs.getString("readerTheme", d.readerTheme)!!,
+            feedDefaults = prefs.getInt("feedDefaults", 0),
         )
     }
 
@@ -97,6 +100,7 @@ class SettingsStore(context: Context) {
             .putInt("reminderMinuteOfDay", s.reminderMinuteOfDay)
             .putLong("lastNewsRefresh", s.lastNewsRefresh)
             .putString("readerTheme", s.readerTheme)
+            .putInt("feedDefaults", s.feedDefaults)
             .apply()
         _settings.value = s
     }

@@ -33,7 +33,7 @@ class AppContainer(app: Application) {
     val stats = StatsRepository(database)
     val backup = BackupManager(app, database)
     val coverage = CoverageRepository(books, dictionary, words, settings)
-    val news = NewsRepository(database)
+    val news = NewsRepository(database, settings = settings)
     val articles = ArticleImporter(app, books)
 
     /** Returns a tutor for the current AI settings, or null if no key is configured. */

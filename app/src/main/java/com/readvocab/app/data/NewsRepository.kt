@@ -64,14 +64,32 @@ object HttpFetcher : Fetcher {
 data class RefreshResult(val newItems: Int, val failed: List<String>)
 
 /** News tab: the user's feeds and the latest headlines from them, cached for offline viewing. */
-class NewsRepository(private val db: AppDatabase, private val fetcher: Fetcher = HttpFetcher) {
+class NewsRepository(
+    private val db: AppDatabase,
+    private val settings: SettingsStore? = null,
+    private val fetcher: Fetcher = HttpFetcher,
+) {
     private val dao = db.feeds()
 
     fun observeFeeds(): Flow<List<FeedEntity>> = dao.observeFeeds()
     fun observeItems(): Flow<List<FeedItemEntity>> = dao.observeItems()
 
+    /**
+     * A new install gets every built-in feed. An existing list gets each later set of built-in feeds
+     * once, so feeds added in an update appear while ones the user removed stay removed.
+     */
     suspend fun ensureDefaults() {
-        if (dao.countFeeds() == 0) dao.insertFeeds(DEFAULT_FEEDS.mapIndexed { i, f -> f.copy(position = i) })
+        val count = dao.countFeeds()
+        if (count == 0) {
+            dao.insertFeeds(DEFAULT_FEEDS.mapIndexed { i, f -> f.copy(position = i) })
+        } else {
+            val seen = settings?.current?.feedDefaults ?: 0
+            val added = DEFAULT_FEEDS.filter { it.url in ADDED_FEEDS.filterKeys { v -> v > seen }.values.flatten() }
+            if (added.isNotEmpty()) dao.insertFeeds(added.mapIndexed { i, f -> f.copy(position = count + i) })
+        }
+        if (settings != null && settings.current.feedDefaults < DEFAULTS_VERSION) {
+            settings.update { it.copy(feedDefaults = DEFAULTS_VERSION) }
+        }
     }
 
     /** Fetches all enabled feeds in parallel; a feed that fails keeps its old items. */
@@ -138,11 +156,25 @@ class NewsRepository(private val db: AppDatabase, private val fetcher: Fetcher =
             FeedEntity("https://feeds.bbci.co.uk/news/technology/rss.xml", "BBC News · Technology", "https://www.bbc.com/news/technology"),
             FeedEntity("https://feeds.bbci.co.uk/news/science_and_environment/rss.xml", "BBC News · Science", "https://www.bbc.com/news/science_and_environment"),
             FeedEntity("https://www.newyorker.com/feed/everything", "The New Yorker", "https://www.newyorker.com"),
+            FeedEntity("https://www.economist.com/the-world-this-week/rss.xml", "The Economist · The world this week", "https://www.economist.com/the-world-this-week"),
+            FeedEntity("https://www.economist.com/leaders/rss.xml", "The Economist · Leaders", "https://www.economist.com/leaders"),
+            FeedEntity("https://www.economist.com/science-and-technology/rss.xml", "The Economist · Science & technology", "https://www.economist.com/science-and-technology"),
             FeedEntity("https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "NYT · World", "https://www.nytimes.com/section/world"),
             FeedEntity("https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml", "NYT · Technology", "https://www.nytimes.com/section/technology"),
             FeedEntity("https://www.theguardian.com/world/rss", "The Guardian · World", "https://www.theguardian.com/world", enabled = false),
             FeedEntity("https://time.com/feed/", "TIME", "https://time.com", enabled = false),
         )
+
+        /** Built-in feeds added after the first release, by the set they came in. */
+        val ADDED_FEEDS: Map<Int, List<String>> = mapOf(
+            2 to listOf(
+                "https://www.newyorker.com/feed/everything",
+                "https://www.economist.com/the-world-this-week/rss.xml",
+                "https://www.economist.com/leaders/rss.xml",
+                "https://www.economist.com/science-and-technology/rss.xml",
+            ),
+        )
+        val DEFAULTS_VERSION = ADDED_FEEDS.keys.max()
 
         val BOOKMARKS = listOf(
             SiteBookmark("BBC News", "https://www.bbc.com/news"),

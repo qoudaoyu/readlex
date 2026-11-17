@@ -127,11 +127,17 @@ class NewsTest {
             }
         }
         val db = Room.inMemoryDatabaseBuilder(app, AppDatabase::class.java).build()
-        val news = NewsRepository(db, fetcher)
+        val news = NewsRepository(db, fetcher = fetcher)
         val now = java.time.Instant.parse("2026-11-17T10:00:00Z").toEpochMilli()
         val r = news.refresh(now)
         // The three BBC feeds share the fake response; other default feeds fail.
-        assertEquals(listOf("The New Yorker", "NYT · World", "NYT · Technology"), r.failed)
+        assertEquals(
+            listOf(
+                "The New Yorker", "The Economist · The world this week", "The Economist · Leaders",
+                "The Economist · Science & technology", "NYT · World", "NYT · Technology",
+            ),
+            r.failed,
+        )
         val items = news.observeItems().first()
         assertEquals(listOf("One", "Two"), items.map { it.title })
         down = true
@@ -143,6 +149,27 @@ class NewsTest {
         news.setEnabled(NewsRepository.DEFAULT_FEEDS[1].url, false)
         news.setEnabled(NewsRepository.DEFAULT_FEEDS[2].url, false)
         assertTrue("items of disabled feeds are hidden", news.observeItems().first().isEmpty())
+        db.close()
+    }
+
+    /** Feeds added to the built-in list in an update reach existing users once; removed ones stay removed. */
+    @Test fun newBuiltInFeedsReachExistingLists() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(app, AppDatabase::class.java).build()
+        val news = NewsRepository(db, settings = c.settings)
+        c.settings.update { it.copy(feedDefaults = 0) }
+        val economist = "https://www.economist.com/leaders/rss.xml"
+        // An install from before the update: the first set of feeds, minus a feed the user removed.
+        val firstSet = NewsRepository.DEFAULT_FEEDS.filter { f -> NewsRepository.ADDED_FEEDS.values.flatten().none { it == f.url } }
+        db.feeds().insertFeeds(firstSet.drop(1))
+        news.ensureDefaults()
+        val urls = news.observeFeeds().first().map { it.url }
+        assertTrue(economist in urls)
+        assertTrue("https://www.newyorker.com/feed/everything" in urls)
+        assertFalse(firstSet[0].url in urls)
+        assertEquals(NewsRepository.DEFAULTS_VERSION, c.settings.current.feedDefaults)
+        news.removeFeed(economist)
+        news.ensureDefaults()
+        assertFalse("a removed feed is not added back", economist in news.observeFeeds().first().map { it.url })
         db.close()
     }
 
