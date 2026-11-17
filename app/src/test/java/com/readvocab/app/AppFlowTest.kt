@@ -226,5 +226,20 @@ class AppFlowTest {
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("The New Yorker")).fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
         shot("9-browser-start")
+
+        // An imported article in the reader: source line, headline, subheading, list.
+        val articleId = runBlocking {
+            val raw = javaClass.classLoader!!.getResource("bbc-like.extracted.json")!!.readText()
+            container.articles.save(container.articles.parseResult(raw))
+        }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        compose.onNode(hasText("书架")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Why river towns", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodes(hasText("Why river towns", substring = true))[0].performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("A cheaper defence?")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        shot("10-article")
+        assertTrue(articleId > 0)
     }
 }

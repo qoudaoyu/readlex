@@ -81,15 +81,56 @@ object FeedParser {
     private fun Element.text(tag: String): String = children(tag).firstOrNull()?.textContent.orEmpty()
 }
 
-/** Turns the HTML that Readability extracts from an article page into reader paragraphs. */
+/** One block of an extracted article: "h" subheading, "p" paragraph, "li" list item, "q" quotation. */
+data class ArticleBlock(val type: String, val text: String)
+
+/** Turns what Readability extracts from an article page into reader paragraphs (see [ParaMarkup]). */
 object ArticleText {
     private val DROP = Regex("(?is)<(figure|figcaption|button|aside|form|noscript|iframe)\\b.*?</\\1\\s*>")
+    private val WS = Regex("\\s+")
 
-    fun fromHtml(html: String): String = HtmlText.toText(DROP.replace(html, ""))
-        .lines()
-        // Short promo lines only; a real sentence that happens to say "subscribe to" stays.
-        .filter { line -> line.isNotBlank() && !(line.length < 120 && BOILERPLATE.any { line.startsWith(it, ignoreCase = true) }) }
-        .joinToString("\n\n")
+    /** Fallback when only HTML is available: whitespace inside a paragraph is not a line break. */
+    fun fromHtml(html: String): String {
+        val collapsed = WS.replace(DROP.replace(html, ""), " ")
+        return HtmlText.toText(collapsed).lines().map { ArticleBlock("p", it) }.let(::fromBlocks)
+    }
 
-    private val BOILERPLATE = listOf("Sign up for", "Subscribe to", "Read more:", "Related Topics", "Copyright ©")
+    fun fromBlocks(blocks: List<ArticleBlock>, title: String = ""): String {
+        val normTitle = norm(title)
+        val out = ArrayList<String>()
+        for (b in blocks) {
+            val t = WS.replace(b.text, " ").trim()
+            if (t.isEmpty() || isBoilerplate(t)) continue
+            // The headline is shown separately; drop it when the body repeats it.
+            if (out.isEmpty() && normTitle.isNotEmpty() && norm(t) == normTitle) continue
+            out += when (b.type) {
+                "h" -> "## $t"
+                "li" -> "• $t"
+                "q" -> "> $t"
+                else -> t
+            }
+        }
+        // A trailing subheading with nothing under it ("More on this story") is navigation.
+        while (out.isNotEmpty() && out.last().startsWith("## ")) out.removeAt(out.lastIndex)
+        return out.joinToString("\n\n")
+    }
+
+    private fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+
+    /** Short promo, credit and widget lines that page templates put among the paragraphs. */
+    private fun isBoilerplate(line: String): Boolean {
+        if (line.length >= 120) return false
+        val l = line.lowercase()
+        return EXACT.contains(l.trimEnd('.', ':', ',')) || PREFIXES.any { l.startsWith(it) }
+    }
+
+    private val EXACT = setOf(
+        "advertisement", "share", "save", "share this article", "listen", "watch", "related", "related topics",
+        "more on this story", "read more", "image source", "image caption", "getty images", "skip advertisement",
+        "continue reading", "follow us", "most read",
+    )
+    private val PREFIXES = listOf(
+        "sign up for", "subscribe to", "read more:", "related:", "copyright", "image source,", "image caption,",
+        "media caption,", "watch:", "listen:", "get our ",
+    )
 }

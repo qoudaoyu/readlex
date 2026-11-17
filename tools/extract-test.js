@@ -11,7 +11,7 @@ const path = require('path');
     .replace('/*READABILITY*/', fs.readFileSync(path.join(assets, 'Readability.js'), 'utf8'));
   const browser = await chromium.launch();
   const page = await browser.newPage();
-  for (const name of ['article-page.html', 'front-page.html']) {
+  for (const name of ['article-page.html', 'front-page.html', 'bbc-like.html']) {
     await page.goto('file://' + path.join(root, 'app/src/test/resources', name));
     const out = await page.evaluate(script);
     // evaluateJavascript hands Kotlin the JSON encoding of the returned value.

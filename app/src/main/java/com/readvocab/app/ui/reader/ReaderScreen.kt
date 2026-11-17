@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -60,6 +62,9 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import com.readvocab.core.text.ParaMarkup
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,6 +93,8 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     val layouts = remember { HashMap<Int, TextLayoutResult>() }
     val density = LocalDensity.current
     val horizontalPadPx = with(density) { READER_H_PADDING.toPx() }
+    val quotePadPx = with(density) { QUOTE_PAD.toPx() }
+    val headingPadPx = with(density) { HEADING_PAD.toPx() }
     val snackbar = remember { SnackbarHostState() }
     var showChapters by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -138,7 +145,8 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     val highlightFor = remember(statuses, settings.knownBoundary, settings.highlightMode) {
         { lemma: String -> vm.highlight(lemma, statuses, settings) }
     }
-    val chapterTitle = state.chapters.getOrNull(state.chapterIndex)?.title.orEmpty()
+    // A one-chapter text (an article, a pasted text) has no chapter name worth showing.
+    val chapterTitle = if (state.chapters.size > 1) state.chapters.getOrNull(state.chapterIndex)?.title.orEmpty() else ""
 
     Scaffold(
         topBar = {
@@ -146,7 +154,7 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
                 title = {
                     Column {
                         Text(state.book?.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(chapterTitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (chapterTitle.isNotEmpty()) Text(chapterTitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") } },
@@ -190,7 +198,10 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             val paraIndex = item.index - 1
             val layout = layouts[paraIndex] ?: return null
             if (paraIndex !in state.paragraphs.indices) return null
-            return paraIndex to layout.getOffsetForPosition(Offset(pos.x - horizontalPadPx, y - item.offset))
+            val kind = state.paragraphs[paraIndex].kind
+            val dx = if (kind == ParaMarkup.Kind.QUOTE) quotePadPx else 0f
+            val dy = if (kind == ParaMarkup.Kind.HEADING) headingPadPx else 0f
+            return paraIndex to layout.getOffsetForPosition(Offset(pos.x - horizontalPadPx - dx, y - item.offset - dy))
         }
         LazyColumn(
             state = listState,
@@ -205,7 +216,16 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             contentPadding = PaddingValues(horizontal = READER_H_PADDING, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            item { Text(chapterTitle, style = MaterialTheme.typography.headlineSmall) }
+            // Item 0: the chapter name, or for an article its source and author above the headline.
+            item {
+                val book = state.book
+                when {
+                    chapterTitle.isNotEmpty() -> Text(chapterTitle, style = MaterialTheme.typography.headlineSmall)
+                    book != null && (book.isArticle || book.isStory) && book.author.isNotBlank() ->
+                        Text(book.author, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    else -> Spacer(Modifier.height(0.dp))
+                }
+            }
             itemsIndexed(state.paragraphs) { i, para ->
                 // Selected sentences in one paragraph are contiguous: shade them as one block, gaps included.
                 val selected = selection?.let { sel ->
@@ -268,6 +288,8 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
 }
 
 private val READER_H_PADDING = 20.dp
+private val QUOTE_PAD = 16.dp
+private val HEADING_PAD = 8.dp
 
 /**
  * Long-press then drag to select sentences. Watches the Initial pass so that, once the long press
@@ -326,11 +348,21 @@ private fun ParagraphText(
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val currentOnTap by rememberUpdatedState(onTap)
+    val base = TextStyle(fontSize = fontSizeSp.sp, lineHeight = (fontSizeSp * 1.6f).sp, color = MaterialTheme.colorScheme.onSurface)
+    val style = when (para.kind) {
+        ParaMarkup.Kind.TITLE -> base.copy(fontSize = (fontSizeSp * 1.45f).sp, lineHeight = (fontSizeSp * 1.9f).sp, fontWeight = FontWeight.SemiBold)
+        ParaMarkup.Kind.HEADING -> base.copy(fontSize = (fontSizeSp * 1.15f).sp, lineHeight = (fontSizeSp * 1.7f).sp, fontWeight = FontWeight.SemiBold)
+        ParaMarkup.Kind.QUOTE -> base.copy(fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ParaMarkup.Kind.BODY -> base
+    }
     Text(
         text = annotated,
-        style = TextStyle(fontSize = fontSizeSp.sp, lineHeight = (fontSizeSp * 1.6f).sp, color = MaterialTheme.colorScheme.onSurface),
+        style = style,
         onTextLayout = { layout = it; onLayout(it) },
-        modifier = Modifier.fillMaxWidth().pointerInput(para) {
+        modifier = Modifier.fillMaxWidth()
+            .then(if (para.kind == ParaMarkup.Kind.QUOTE) Modifier.padding(start = QUOTE_PAD) else Modifier)
+            .then(if (para.kind == ParaMarkup.Kind.HEADING) Modifier.padding(top = HEADING_PAD) else Modifier)
+            .pointerInput(para) {
             detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
         },
     )

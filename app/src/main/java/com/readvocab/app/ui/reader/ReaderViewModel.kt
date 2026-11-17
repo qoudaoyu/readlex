@@ -13,6 +13,7 @@ import com.readvocab.app.ui.Async
 import com.readvocab.core.ai.AiException
 import com.readvocab.core.ai.ContextualMeaning
 import com.readvocab.core.ai.SentenceExplanation
+import com.readvocab.core.text.ParaMarkup
 import com.readvocab.core.text.Tokenizer
 import com.readvocab.core.vocab.Highlight
 import com.readvocab.core.vocab.WordClassifier
@@ -35,7 +36,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class TokenInfo(val start: Int, val end: Int, val surface: String, val lemma: String)
-data class Para(val text: String, val tokens: List<TokenInfo>, val sentences: List<IntRange>) {
+data class Para(
+    val text: String,
+    val tokens: List<TokenInfo>,
+    val sentences: List<IntRange>,
+    val kind: ParaMarkup.Kind = ParaMarkup.Kind.BODY,
+) {
     fun sentenceIndexAt(offset: Int): Int =
         sentences.indexOfFirst { offset <= it.last }.let { if (it < 0) sentences.lastIndex else it }
 }
@@ -116,13 +122,15 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         _state.update { it.copy(loading = true) }
         val text = c.books.chapterText(bookId, index)
         val paras = withContext(Dispatchers.Default) {
-            Tokenizer.paragraphs(text).map { p ->
+            Tokenizer.paragraphs(text).map { raw ->
+                val (kind, p) = ParaMarkup.parse(raw)
                 Para(
                     p,
                     Tokenizer.tokenize(p).map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text)) },
                     Tokenizer.sentenceRanges(p),
+                    kind,
                 )
-            }
+            }.filter { it.text.isNotEmpty() }
         }
         seenUpTo = -1
         committedUpTo = -1

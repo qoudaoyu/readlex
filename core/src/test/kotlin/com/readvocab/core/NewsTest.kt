@@ -1,6 +1,8 @@
 package com.readvocab.core
 
+import com.readvocab.core.news.ArticleBlock
 import com.readvocab.core.news.ArticleText
+import com.readvocab.core.text.ParaMarkup
 import com.readvocab.core.news.FeedException
 import com.readvocab.core.news.FeedParser
 import com.readvocab.core.vocab.Coverage
@@ -79,6 +81,28 @@ class NewsTest {
             <p>First paragraph of the story.</p><p>Sign up for our newsletter</p>
             <p>Readers who subscribe to the paper said they liked it.</p></div>"""
         assertEquals("First paragraph of the story.\n\nReaders who subscribe to the paper said they liked it.", ArticleText.fromHtml(html))
+    }
+
+    @Test fun articleBlocksKeepShape() {
+        val blocks = listOf(
+            ArticleBlock("h", "Why river towns are planting forests"),   // repeats the headline
+            ArticleBlock("p", "Share"),
+            ArticleBlock("p", "First   paragraph,\n  split over\n lines."),
+            ArticleBlock("h", "A cheaper defence?"),
+            ArticleBlock("li", "planting trees,"),
+            ArticleBlock("q", "We can't stop the rain."),
+            ArticleBlock("p", "Advertisement"),
+            ArticleBlock("h", "More on this story"),
+        )
+        assertEquals(
+            "First paragraph, split over lines.\n\n## A cheaper defence?\n\n\u2022 planting trees,\n\n> We can't stop the rain.",
+            ArticleText.fromBlocks(blocks, "Why river towns are planting forests"),
+        )
+        // HTML fallback: line breaks inside a <p> are just spaces.
+        assertEquals("One two three.\n\nFour.", ArticleText.fromHtml("<p>One\n two\n  three.</p>\n<p>Four.</p>"))
+        assertEquals(ParaMarkup.Kind.TITLE to "Headline", ParaMarkup.parse("# Headline"))
+        assertEquals(ParaMarkup.Kind.HEADING to "Sub", ParaMarkup.parse("## Sub"))
+        assertEquals(ParaMarkup.Kind.BODY to "#hashtag", ParaMarkup.parse("#hashtag"))
     }
 
     @Test fun coverage() {

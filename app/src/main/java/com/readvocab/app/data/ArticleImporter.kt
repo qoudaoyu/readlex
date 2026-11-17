@@ -2,6 +2,7 @@ package com.readvocab.app.data
 
 import android.content.Context
 import com.readvocab.core.importer.ImportException
+import com.readvocab.core.news.ArticleBlock
 import com.readvocab.core.news.ArticleText
 import com.readvocab.core.text.Tokenizer
 import org.json.JSONObject
@@ -32,10 +33,15 @@ class ArticleImporter(private val context: Context, private val books: BookRepos
         if (inner == null || inner == "null") throw ImportException("这一页没找到文章正文。打开具体的文章页再试。")
         val o = JSONObject(inner)
         if (o.has("error")) throw ImportException("提取正文失败：${o.getString("error")}")
-        val text = ArticleText.fromHtml(o.optString("content"))
+        val title = o.optString("title").trim()
+        val blocks = o.optJSONArray("blocks")?.let { arr ->
+            (0 until arr.length()).map { i -> arr.getJSONObject(i).let { ArticleBlock(it.optString("type"), it.optString("text")) } }
+        }
+        val text = if (!blocks.isNullOrEmpty()) ArticleText.fromBlocks(blocks, title) else ArticleText.fromHtml(o.optString("content"))
         val article = ExtractedArticle(
-            title = o.optString("title").trim(),
-            byline = o.optString("byline").trim(),
+            title = title,
+            // "Jane Doe,John Roe" → "Jane Doe, John Roe"
+            byline = o.optString("byline").trim().replace(Regex(",(?=\\S)"), ", "),
             siteName = o.optString("siteName").trim(),
             text = text,
             url = o.optString("url"),
@@ -52,7 +58,7 @@ class ArticleImporter(private val context: Context, private val books: BookRepos
         val site = article.siteName.ifBlank { runCatching { URL(article.url).host.removePrefix("www.") }.getOrDefault("") }
         val author = listOf(site, article.byline).filter { it.isNotBlank() }.joinToString(" · ")
         val title = article.title.ifBlank { site }
-        return books.importText(title, "$title\n\n${article.text}", author, BookEntity.KIND_ARTICLE, article.url)
+        return books.importText(title, "# $title\n\n${article.text}", author, BookEntity.KIND_ARTICLE, article.url)
     }
 
     companion object {

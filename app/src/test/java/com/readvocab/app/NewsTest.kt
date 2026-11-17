@@ -48,7 +48,7 @@ class NewsTest {
         assertTrue(book.isArticle)
         assertEquals("Example News · Jane Doe", book.author)
         assertEquals(article.url, book.sourceUrl)
-        assertTrue(c.books.chapterText(id, 0).startsWith("Cities Turn to Rooftop Farms"))
+        assertTrue(c.books.chapterText(id, 0).startsWith("# Cities Turn to Rooftop Farms"))
         assertEquals("same page is not imported twice", id, c.articles.save(article))
 
         // Coverage: an ordinary news text is mostly known at a 5000-word level.
@@ -62,6 +62,21 @@ class NewsTest {
         val unknown = article.text.split(Regex("\\W+")).map { c.dictionary.lemma(it) }.first { (c.dictionary.rank(it) ?: 0) in 1..5000 }
         c.words.setStatus(unknown, WordStatus.LEARNING)
         assertTrue(c.coverage.observe().first()[id]!! < byBook[id]!!)
+    }
+
+    /** A page shaped like a BBC article: byline box, image credits, subheadings, a list, an ad slot. */
+    @Test fun keepsArticleShape() {
+        val a = c.articles.parseResult(fixture("bbc-like.extracted.json"))
+        assertEquals("Why river towns are planting forests upstream", a.title)
+        val paras = a.text.split("\n\n")
+        assertEquals("For the second time in three years, shopkeepers in a small river town spent the new year pumping water out of their cellars.", paras[0])
+        assertTrue("## A cheaper defence?" in paras)
+        assertTrue("\u2022 restoring old wetlands near the river," in paras)
+        for (junk in listOf("Share", "Save", "Getty Images", "Image caption", "Alex Rivers", "Advertisement", "More on this story", "17 November")) {
+            assertFalse("should drop $junk", a.text.contains(junk))
+        }
+        assertTrue(paras.last().startsWith("Similar schemes"))
+        assertEquals(11, paras.size)
     }
 
     @Test fun frontPageIsRejected() {
