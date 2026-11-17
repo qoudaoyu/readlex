@@ -2,6 +2,7 @@ package com.readvocab.app
 
 import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -200,5 +201,30 @@ class AppFlowTest {
         compose.onNode(hasText("从备份恢复")).performScrollTo()
         compose.waitForIdle()
         shot("5b-settings-backup")
+
+        // News tab with cached headlines (no network in tests), then the in-app browser.
+        runBlocking {
+            container.news.ensureDefaults()
+            val now = System.currentTimeMillis()
+            container.settings.update { it.copy(lastNewsRefresh = now) }
+            val feed = com.readvocab.app.data.NewsRepository.DEFAULT_FEEDS
+            container.database.feeds().upsertItems(listOf(
+                com.readvocab.app.data.FeedItemEntity("https://example.com/a", feed[0].url, "Cities turn to rooftop farms as summers grow hotter", "Officials say plants on roofs cool the rooms below.", now - 25 * 60_000, now),
+                com.readvocab.app.data.FeedItemEntity("https://example.com/b", feed[3].url, "The quiet comeback of the public library", "Why more people are borrowing books again.", now - 3 * 3600_000, now),
+                com.readvocab.app.data.FeedItemEntity("https://example.com/c", feed[4].url, "Ports reopen after the storm", "Ships return to harbour along the coast.", now - 26 * 3600_000, now),
+            ))
+        }
+        compose.onNode(hasText("新闻")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("rooftop farms", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        shot("8-news")
+        compose.onNode(hasText("Ports reopen after the storm")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("import-article")).fetchSemanticsNodes().isNotEmpty() }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        compose.onNode(hasContentDescription("浏览器")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("The New Yorker")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        shot("9-browser-start")
     }
 }

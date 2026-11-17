@@ -2,7 +2,10 @@ package com.readvocab.app
 
 import android.app.Application
 import com.readvocab.app.data.AppDatabase
+import com.readvocab.app.data.ArticleImporter
 import com.readvocab.app.data.BackupManager
+import com.readvocab.app.data.CoverageRepository
+import com.readvocab.app.data.NewsRepository
 import com.readvocab.app.data.StatsRepository
 import com.readvocab.app.reminder.Reminders
 import com.readvocab.app.data.BookRepository
@@ -29,6 +32,9 @@ class AppContainer(app: Application) {
     val stories = StoryGenerator(words, books, dictionary, settings) { tutor() }
     val stats = StatsRepository(database)
     val backup = BackupManager(app, database)
+    val coverage = CoverageRepository(books, dictionary, words, settings)
+    val news = NewsRepository(database)
+    val articles = ArticleImporter(app, books)
 
     /** Returns a tutor for the current AI settings, or null if no key is configured. */
     fun tutor(): AiTutor? {

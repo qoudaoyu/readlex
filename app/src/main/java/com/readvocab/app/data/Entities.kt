@@ -17,14 +17,18 @@ data class BookEntity(
     val lastReadAt: Long = 0,
     val chapterIndex: Int = 0,
     val paragraphIndex: Int = 0,
-    /** [KIND_BOOK] or [KIND_STORY] (an AI review story). */
+    /** [KIND_BOOK], [KIND_STORY] (an AI review story) or [KIND_ARTICLE] (imported from the web). */
     val kind: String = KIND_BOOK,
+    /** Page an article was imported from; empty for books and stories. */
+    val sourceUrl: String = "",
 ) {
     val isStory: Boolean get() = kind == KIND_STORY
+    val isArticle: Boolean get() = kind == KIND_ARTICLE
 
     companion object {
         const val KIND_BOOK = "BOOK"
         const val KIND_STORY = "STORY"
+        const val KIND_ARTICLE = "ARTICLE"
     }
 }
 
@@ -93,4 +97,27 @@ data class DailyReadingEntity(
     @PrimaryKey val day: Long,
     val words: Int = 0,
     val seconds: Long = 0,
+)
+
+/** A news feed (RSS or Atom) shown on the News tab. */
+@Entity(tableName = "feeds")
+data class FeedEntity(
+    @PrimaryKey val url: String,
+    val title: String,
+    /** Home page, opened in the in-app browser from the feed header. */
+    val site: String = "",
+    val position: Int = 0,
+    val enabled: Boolean = true,
+    val lastFetchedAt: Long = 0,
+    val lastError: String? = null,
+)
+
+@Entity(tableName = "feed_items", indices = [Index("feedUrl"), Index("publishedAt")])
+data class FeedItemEntity(
+    @PrimaryKey val link: String,
+    val feedUrl: String,
+    val title: String,
+    val summary: String,
+    val publishedAt: Long,
+    val fetchedAt: Long,
 )

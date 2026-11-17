@@ -15,7 +15,7 @@ import java.io.File
 /** Opens a database created with the version-1 schema (what 0.1–0.3 installed) using the current code. */
 @RunWith(RobolectricTestRunner::class)
 class MigrationTest {
-    @Test fun migrates1to3() = runBlocking {
+    @Test fun migrates1toLatest() = runBlocking {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         val schema = JSONObject(File("schemas/com.readvocab.app.data.AppDatabase/1.json").readText()).getJSONObject("database")
         val file = ctx.getDatabasePath("migrate-test.db").apply { parentFile?.mkdirs(); delete() }
@@ -35,7 +35,7 @@ class MigrationTest {
             db.execSQL("INSERT INTO books (title, author, chapterCount, wordCount, addedAt, lastReadAt, chapterIndex, paragraphIndex) VALUES ('复习：X', 'AI 复习短文 · 8 个目标词', 1, 10, 2, 0, 0, 0)")
             db.version = 1
         }
-        val room = Room.databaseBuilder(ctx, AppDatabase::class.java, file.path).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
+        val room = Room.databaseBuilder(ctx, AppDatabase::class.java, file.path).addMigrations(*AppDatabase.ALL_MIGRATIONS).build()
         val books = room.books()
         assertEquals(false, books.get(1)!!.isStory)
         assertEquals(true, books.get(2)!!.isStory)

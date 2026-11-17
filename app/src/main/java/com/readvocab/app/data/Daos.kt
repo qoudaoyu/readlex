@@ -2,6 +2,7 @@ package com.readvocab.app.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
 import com.readvocab.core.vocab.WordStatus
@@ -35,6 +36,50 @@ interface BookDao {
 
     @Query("SELECT COUNT(*) FROM books")
     suspend fun count(): Int
+
+    @Query("SELECT * FROM books WHERE sourceUrl = :url LIMIT 1")
+    suspend fun bySourceUrl(url: String): BookEntity?
+}
+
+@Dao
+interface FeedDao {
+    @Query("SELECT * FROM feeds ORDER BY position, title")
+    fun observeFeeds(): Flow<List<FeedEntity>>
+
+    @Query("SELECT * FROM feeds WHERE enabled = 1 ORDER BY position")
+    suspend fun enabledFeeds(): List<FeedEntity>
+
+    @Query("SELECT COUNT(*) FROM feeds")
+    suspend fun countFeeds(): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertFeeds(feeds: List<FeedEntity>)
+
+    @Upsert
+    suspend fun upsertFeed(feed: FeedEntity)
+
+    @Query("DELETE FROM feeds WHERE url = :url")
+    suspend fun deleteFeed(url: String)
+
+    @Query("UPDATE feeds SET enabled = :enabled WHERE url = :url")
+    suspend fun setEnabled(url: String, enabled: Boolean)
+
+    @Query("UPDATE feeds SET lastFetchedAt = :at, lastError = :error WHERE url = :url")
+    suspend fun markFetched(url: String, at: Long, error: String?)
+
+    /** Newest items from enabled feeds. */
+    @Query("SELECT i.* FROM feed_items i JOIN feeds f ON f.url = i.feedUrl WHERE f.enabled = 1 ORDER BY i.publishedAt DESC, i.fetchedAt DESC LIMIT :limit")
+    fun observeItems(limit: Int = 300): Flow<List<FeedItemEntity>>
+
+    @Upsert
+    suspend fun upsertItems(items: List<FeedItemEntity>)
+
+    @Query("DELETE FROM feed_items WHERE feedUrl = :url")
+    suspend fun deleteItems(url: String)
+
+    /** Keeps the cache small: drop items older than [before]. */
+    @Query("DELETE FROM feed_items WHERE publishedAt < :before AND fetchedAt < :before")
+    suspend fun prune(before: Long)
 }
 
 @Dao
@@ -72,6 +117,9 @@ interface WordDao {
 
     @Query("SELECT COUNT(*) FROM words")
     suspend fun count(): Int
+
+    @Query("SELECT lemma, status FROM words")
+    suspend fun statuses(): List<LemmaStatus>
 
     companion object {
         val REVIEW_STATUSES = listOf(WordStatus.LEARNING, WordStatus.FAMILIAR, WordStatus.MASTERED)
@@ -114,6 +162,8 @@ interface ReviewLogDao {
 }
 
 data class LogPoint(val at: Long, val source: ReviewSource)
+
+data class LemmaStatus(val lemma: String, val status: WordStatus)
 
 @Dao
 interface DailyReadingDao {

@@ -23,6 +23,7 @@ class WordRepository(private val db: AppDatabase) {
     fun observeByStatus(statuses: List<WordStatus>) = words.observeByStatus(statuses)
 
     suspend fun get(lemma: String) = words.get(lemma)
+    suspend fun getAllStatuses(): Map<String, com.readvocab.core.vocab.WordStatus> = words.statuses().associate { it.lemma to it.status }
     suspend fun encounters(lemma: String) = encounters.forLemma(lemma)
     suspend fun due(limit: Int = 100) = words.due(System.currentTimeMillis(), limit)
     suspend fun countDue() = words.countDue(System.currentTimeMillis())

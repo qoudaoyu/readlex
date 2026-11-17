@@ -115,7 +115,8 @@ class V2Test {
         settings.edit().putString("apiKey", "sk-secret").putInt("fontSizeSp", 22).putBoolean("autoStory", true).commit()
 
         var db = AppDatabase.create(ctx, name)
-        val id = db.books().insert(BookEntity(title = "Kept", author = "", chapterCount = 1, wordCount = 3, addedAt = 1))
+        // A high id keeps this book's folder apart from the sample book the app imports in the background.
+        val id = db.books().insert(BookEntity(id = 9_999, title = "Kept", author = "", chapterCount = 1, wordCount = 3, addedAt = 1))
         File(ctx.filesDir, "books/$id").apply { mkdirs() }.resolve("0.txt").writeText("Hello there friend")
         db.words().upsert(word("plateau", WordStatus.LEARNING, 5))
         val out = ByteArrayOutputStream()
@@ -170,7 +171,7 @@ class V2Test {
         db.close()
     }
 
-    @Test fun migrates2to3() = runBlocking {
+    @Test fun migrates2toLatest() = runBlocking {
         val schema = JSONObject(File("schemas/com.readvocab.app.data.AppDatabase/2.json").readText()).getJSONObject("database")
         val file = ctx.getDatabasePath("migrate-23.db").apply { parentFile?.mkdirs(); delete() }
         SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
@@ -191,7 +192,7 @@ class V2Test {
             db.version = 2
         }
         val room = Room.databaseBuilder(ctx, AppDatabase::class.java, file.path)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS).build()
         val now = at(2026, 11, 16)
         val stats = StatsRepository(room, { now }, { zone }).observe().first()
         assertEquals(1, stats.history.sumOf { it.added }) // backfilled from the word's createdAt

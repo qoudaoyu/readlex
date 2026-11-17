@@ -18,7 +18,7 @@ class Converters {
 }
 
 @Database(
-    entities = [BookEntity::class, ChapterEntity::class, WordEntity::class, EncounterEntity::class, ReviewLogEntity::class, DailyReadingEntity::class],
+    entities = [BookEntity::class, ChapterEntity::class, WordEntity::class, EncounterEntity::class, ReviewLogEntity::class, DailyReadingEntity::class, FeedEntity::class, FeedItemEntity::class],
     version = AppDatabase.VERSION,
     exportSchema = true,
 )
@@ -29,14 +29,17 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun encounters(): EncounterDao
     abstract fun reviewLog(): ReviewLogDao
     abstract fun dailyReading(): DailyReadingDao
+    abstract fun feeds(): FeedDao
 
     companion object {
-        const val VERSION = 3
+        const val VERSION = 4
         const val NAME = "readvocab.db"
+
+        val ALL_MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 
         fun create(context: Context, name: String = NAME): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(*ALL_MIGRATIONS)
                 .build()
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -54,6 +57,17 @@ abstract class AppDatabase : RoomDatabase() {
                     "INSERT INTO review_log (lemma, rating, source, at) " +
                         "SELECT lemma, 1, 'ADD', createdAt FROM words WHERE status IN ('LEARNING', 'FAMILIAR', 'MASTERED')"
                 )
+            }
+        }
+
+        /** Web articles (source URL on books) and news feeds. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN sourceUrl TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `feeds` (`url` TEXT NOT NULL, `title` TEXT NOT NULL, `site` TEXT NOT NULL, `position` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, `lastFetchedAt` INTEGER NOT NULL, `lastError` TEXT, PRIMARY KEY(`url`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `feed_items` (`link` TEXT NOT NULL, `feedUrl` TEXT NOT NULL, `title` TEXT NOT NULL, `summary` TEXT NOT NULL, `publishedAt` INTEGER NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`link`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_feed_items_feedUrl` ON `feed_items` (`feedUrl`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_feed_items_publishedAt` ON `feed_items` (`publishedAt`)")
             }
         }
     }

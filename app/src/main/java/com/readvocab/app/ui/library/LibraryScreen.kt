@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -59,12 +60,15 @@ import com.readvocab.app.AppContainer
 import com.readvocab.app.data.BookEntity
 import com.readvocab.app.ui.appViewModel
 import com.readvocab.app.ui.formatCount
+import com.readvocab.app.ui.browser.percent
+import com.readvocab.core.vocab.Coverage
 import com.readvocab.app.ui.formatMinutes
 import com.readvocab.app.data.Stats
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -73,14 +77,18 @@ data class LibraryState(
     val vocabSize: Int = 0,
     val stats: Stats? = null,
     val importing: Boolean = false,
+    /** Book id → share of its words the reader knows. */
+    val coverage: Map<Long, Double> = emptyMap(),
 )
 
 class LibraryViewModel(private val c: AppContainer) : ViewModel() {
     private val importing = MutableStateFlow(false)
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
-    val state = combine(c.books.observeBooks(), c.stats.observe(), c.settings.settings, importing) { books, stats, settings, imp ->
-        LibraryState(books = books, vocabSize = settings.vocabSize, stats = stats, importing = imp)
+    val state = combine(
+        c.books.observeBooks(), c.stats.observe(), c.settings.settings, importing, c.coverage.observe().onStart { emit(emptyMap()) },
+    ) { books, stats, settings, imp, cov ->
+        LibraryState(books = books, vocabSize = settings.vocabSize, stats = stats, importing = imp, coverage = cov)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LibraryState())
 
     private fun runImport(block: suspend () -> Long, onOpen: (Long) -> Unit) = viewModelScope.launch {
@@ -108,7 +116,9 @@ class LibraryViewModel(private val c: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview: () -> Unit, onStats: () -> Unit) {
+fun LibraryScreen(
+    onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview: () -> Unit, onStats: () -> Unit, onOpenUrl: (String?) -> Unit,
+) {
     val vm = appViewModel { LibraryViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -132,6 +142,7 @@ fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview:
             TopAppBar(
                 title = { Text("阅读背单词") },
                 actions = {
+                    IconButton(onClick = { onOpenUrl(null) }) { Icon(Icons.Outlined.Language, contentDescription = "从网页导入") }
                     IconButton(onClick = { showPaste = true }) { Icon(Icons.Outlined.ContentPaste, contentDescription = "粘贴文章") }
                 },
             )
@@ -166,10 +177,21 @@ fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview:
                         val progress = if (book.chapterCount == 0) 0f else (book.chapterIndex + 1f) / book.chapterCount
                         LinearProgressIndicator(progress = { if (book.lastReadAt == 0L) 0f else progress }, modifier = Modifier.fillMaxWidth())
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            "${book.chapterCount} 章 · 约 ${book.wordCount} 词" + if (book.lastReadAt > 0) " · 读到第 ${book.chapterIndex + 1} 章" else "",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                (if (book.chapterCount > 1) "${book.chapterCount} 章 · " else "") + "约 ${formatCount(book.wordCount)} 词" +
+                                    if (book.lastReadAt > 0 && book.chapterCount > 1) " · 读到第 ${book.chapterIndex + 1} 章" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            state.coverage[book.id]?.let { cov ->
+                                Text(
+                                    "认识 ${percent(cov)} · ${Coverage.level(cov).label}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (Coverage.level(cov) == Coverage.Level.JUST_RIGHT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -178,7 +200,9 @@ fun LibraryScreen(onOpenBook: (Long) -> Unit, onStartTest: () -> Unit, onReview:
 
     if (showPaste) PasteDialog(onDismiss = { showPaste = false }) { title, text ->
         showPaste = false
-        vm.importText(title, text, onOpenBook)
+        // A pasted link opens in the in-app browser so the article can be extracted.
+        val t = text.trim()
+        if (Regex("^https?://\\S+$").matches(t)) onOpenUrl(t) else vm.importText(title, text, onOpenBook)
     }
     deleting?.let { book ->
         AlertDialog(

@@ -30,6 +30,7 @@ data class AppSettings(
     /** Daily reminder to review/read, at [reminderMinuteOfDay] local time. */
     val reminderEnabled: Boolean = false,
     val reminderMinuteOfDay: Int = 20 * 60,
+    val lastNewsRefresh: Long = 0,
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
 
@@ -69,6 +70,7 @@ class SettingsStore(context: Context) {
             lastAutoStoryDay = prefs.getLong("lastAutoStoryDay", 0),
             reminderEnabled = prefs.getBoolean("reminderEnabled", d.reminderEnabled),
             reminderMinuteOfDay = prefs.getInt("reminderMinuteOfDay", d.reminderMinuteOfDay),
+            lastNewsRefresh = prefs.getLong("lastNewsRefresh", 0),
         )
     }
 
@@ -90,6 +92,7 @@ class SettingsStore(context: Context) {
             .putLong("lastAutoStoryDay", s.lastAutoStoryDay)
             .putBoolean("reminderEnabled", s.reminderEnabled)
             .putInt("reminderMinuteOfDay", s.reminderMinuteOfDay)
+            .putLong("lastNewsRefresh", s.lastNewsRefresh)
             .apply()
         _settings.value = s
     }
