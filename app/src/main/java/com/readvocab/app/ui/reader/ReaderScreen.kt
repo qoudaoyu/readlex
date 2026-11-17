@@ -412,7 +412,10 @@ private fun ParagraphText(
             }
             for (r in selected) addStyle(SpanStyle(background = selectionColor), r.first, r.last + 1)
             for (t in para.tokens) {
-                val style = when (highlightFor(t.lemma)) {
+                val h = highlightFor(t.lemma)
+                // A name is only marked if the reader put it on the word list themselves.
+                if (t.name && h == Highlight.NEW) continue
+                val style = when (h) {
                     Highlight.NONE -> null
                     Highlight.NEW -> SpanStyle(color = HighlightColors.newWord(dark), textDecoration = TextDecoration.Underline)
                     Highlight.LEARNING -> SpanStyle(background = HighlightColors.learning(dark))

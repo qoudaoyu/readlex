@@ -78,6 +78,6 @@ class CoverageRepository(
     fun forget(bookId: Long) { counts.remove(bookId) }
 
     companion object {
-        const val CACHE = "lemmas-v1.tsv"
+        const val CACHE = "lemmas-v2.tsv"
     }
 }

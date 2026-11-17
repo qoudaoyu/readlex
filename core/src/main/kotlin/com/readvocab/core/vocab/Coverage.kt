@@ -1,5 +1,6 @@
 package com.readvocab.core.vocab
 
+import com.readvocab.core.text.ProperNouns
 import com.readvocab.core.text.Tokenizer
 
 /**
@@ -8,10 +9,17 @@ import com.readvocab.core.text.Tokenizer
  * 95–98% coverage; below 90% most readers struggle to follow.
  */
 object Coverage {
-    /** Counts each lemma's occurrences in [text]. [lemma] maps a surface form to its lemma. */
+    /**
+     * Counts each lemma's occurrences in [text], leaving out names (see [ProperNouns]).
+     * [lemma] maps a surface form to its lemma.
+     */
     fun lemmaCounts(text: String, lemma: (String) -> String): Map<String, Int> {
         val counts = HashMap<String, Int>()
-        for (t in Tokenizer.tokenize(text)) counts.merge(lemma(t.text), 1, Int::plus)
+        val paras = Tokenizer.paragraphs(text)
+        val names = ProperNouns.find(paras) { paras[it].startsWith("#") }
+        paras.forEachIndexed { i, p ->
+            for (t in Tokenizer.tokenize(p)) if (t.start !in names[i]) counts.merge(lemma(t.text), 1, Int::plus)
+        }
         return counts
     }
 

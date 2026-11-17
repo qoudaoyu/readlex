@@ -14,6 +14,7 @@ import com.readvocab.core.ai.AiException
 import com.readvocab.core.ai.ContextualMeaning
 import com.readvocab.core.ai.SentenceExplanation
 import com.readvocab.core.text.ParaMarkup
+import com.readvocab.core.text.ProperNouns
 import com.readvocab.core.text.Tokenizer
 import com.readvocab.core.vocab.Highlight
 import com.readvocab.core.vocab.WordClassifier
@@ -35,7 +36,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-data class TokenInfo(val start: Int, val end: Int, val surface: String, val lemma: String)
+/** [name]: a person, place or organisation, which is never flagged as a new word. */
+data class TokenInfo(val start: Int, val end: Int, val surface: String, val lemma: String, val name: Boolean = false)
 data class Para(
     val text: String,
     val tokens: List<TokenInfo>,
@@ -126,11 +128,14 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         _state.update { it.copy(loading = true) }
         val text = c.books.chapterText(bookId, index)
         val paras = withContext(Dispatchers.Default) {
-            Tokenizer.paragraphs(text).map { raw ->
-                val (kind, p) = ParaMarkup.parse(raw)
+            val parsed = Tokenizer.paragraphs(text).map { ParaMarkup.parse(it) }
+            val names = ProperNouns.find(parsed.map { it.second }) {
+                parsed[it].first == ParaMarkup.Kind.TITLE || parsed[it].first == ParaMarkup.Kind.HEADING
+            }
+            parsed.mapIndexed { i, (kind, p) ->
                 Para(
                     p,
-                    Tokenizer.tokenize(p).map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text)) },
+                    Tokenizer.tokenize(p).map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text), t.start in names[i]) },
                     Tokenizer.sentenceRanges(p),
                     kind,
                 )
@@ -211,7 +216,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
             for (t in p.tokens) {
                 if (t.lemma in tapped || t.lemma in passed) continue
                 if (c.dictionary.rank(t.lemma) == null) continue
-                val h = highlight(t.lemma, st, settings)
+                val h = highlight(t.lemma, st, settings).let { if (t.name && it == Highlight.NEW) Highlight.NONE else it }
                 val status = st[t.lemma]
                 // Only words that matter: highlighted ones or ones under review.
                 if (h == Highlight.NONE && status?.isInReview != true) continue
