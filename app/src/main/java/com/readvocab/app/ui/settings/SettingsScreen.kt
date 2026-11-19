@@ -296,10 +296,22 @@ fun SettingsScreen(onStartTest: () -> Unit) {
             HorizontalDivider()
             Text("词汇量", style = MaterialTheme.typography.titleMedium)
             Text(
-                if (s.vocabSize > 0) "测试结果约 ${s.vocabSize} 词；词频前 ${s.knownBoundary} 的词默认视为已认识。"
-                else "还没测试。目前默认词频前 ${s.knownBoundary} 的词视为已认识。",
+                if (s.vocabSize > 0) "测试结果约 ${s.vocabSize} 词。文章难度按你认识各个词频段单词的比例来估算；你查过、学过的词按你的实际记录算。"
+                else "还没测试。目前按大约 ${s.knownBoundary} 词的水平估算文章难度，测一下会准得多。",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (s.calibrationCount > 0) {
+                val shift = s.difficultyShift
+                Text(
+                    "已根据你 ${s.calibrationCount} 次读后反馈校准：" + when {
+                        shift > 0.05f -> "你觉得文章比估算的难，估算已相应调难。"
+                        shift < -0.05f -> "你觉得文章比估算的容易，估算已相应调易。"
+                        else -> "估算和你的感受基本一致。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             OutlinedButton(onClick = onStartTest) { Text(if (s.vocabSize > 0) "重新测试" else "开始测试") }
 
             HorizontalDivider()

@@ -18,7 +18,7 @@ class Converters {
 }
 
 @Database(
-    entities = [BookEntity::class, ChapterEntity::class, WordEntity::class, EncounterEntity::class, ReviewLogEntity::class, DailyReadingEntity::class, FeedEntity::class, FeedItemEntity::class],
+    entities = [BookEntity::class, ChapterEntity::class, WordEntity::class, EncounterEntity::class, ReviewLogEntity::class, DailyReadingEntity::class, FeedEntity::class, FeedItemEntity::class, ArticleCheckEntity::class],
     version = AppDatabase.VERSION,
     exportSchema = true,
 )
@@ -30,12 +30,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reviewLog(): ReviewLogDao
     abstract fun dailyReading(): DailyReadingDao
     abstract fun feeds(): FeedDao
+    abstract fun checks(): ArticleCheckDao
 
     companion object {
-        const val VERSION = 5
+        const val VERSION = 6
         const val NAME = "readvocab.db"
 
-        val ALL_MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        val ALL_MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         fun create(context: Context, name: String = NAME): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
@@ -76,6 +77,13 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN excerpt TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE books ADD COLUMN publishedAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Background difficulty checks of news articles. */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `article_checks` (`link` TEXT NOT NULL, `status` TEXT NOT NULL, `words` INTEGER NOT NULL, `lemmas` TEXT NOT NULL, `checkedAt` INTEGER NOT NULL, PRIMARY KEY(`link`))")
             }
         }
     }

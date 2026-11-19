@@ -2,7 +2,9 @@ package com.readvocab.app
 
 import android.app.Application
 import com.readvocab.app.data.AppDatabase
+import com.readvocab.app.data.ArticleChecker
 import com.readvocab.app.data.ArticleImporter
+import com.readvocab.app.data.WebPageReader
 import com.readvocab.app.data.BackupManager
 import com.readvocab.app.data.CoverageRepository
 import com.readvocab.app.data.NewsRepository
@@ -23,7 +25,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Manual dependency container; small enough that a DI framework is not worth it yet. */
-class AppContainer(app: Application) {
+class AppContainer(val app: Application) {
+    /** For work that should outlive a screen, such as checking article difficulty. */
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val database = AppDatabase.create(app)
     val dictionary = DictionaryRepository(app)
     val books = BookRepository(app, database)
@@ -35,6 +39,7 @@ class AppContainer(app: Application) {
     val coverage = CoverageRepository(books, dictionary, words, settings)
     val news = NewsRepository(database, settings = settings)
     val articles = ArticleImporter(app, books)
+    val checker = ArticleChecker(database, WebPageReader(app) { articles.extractionScript() }, articles, dictionary, words, coverage, settings)
 
     /** Returns a tutor for the current AI settings, or null if no key is configured. */
     fun tutor(): AiTutor? {

@@ -3,6 +3,7 @@ package com.readvocab.app.data
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.readvocab.core.text.Lemmatizer
+import com.readvocab.core.vocab.WordFamily
 import com.readvocab.core.vocab.Band
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +40,7 @@ class DictionaryRepository(private val context: Context) {
     private var db: SQLiteDatabase? = null
     private var ranks: HashMap<String, Int> = HashMap()
     private var lemmas: HashMap<String, String> = HashMap()
+    private var familyRanks: HashMap<String, Int> = HashMap()
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready
 
@@ -65,13 +67,22 @@ class DictionaryRepository(private val context: Context) {
             database.rawQuery("SELECT form, lemma FROM lemma", null).use { c ->
                 while (c.moveToNext()) l[c.getString(0)] = c.getString(1)
             }
-            db = database; ranks = r; lemmas = l
+            // Spelling variants and transparent derivations take the rank of their family's commonest member.
+            val eff = HashMap<String, Int>(r.size)
+            for ((w, rank) in r) {
+                val e = WordFamily.effectiveRank(w) { r[it] } ?: rank
+                if (e != rank) eff[w] = e
+            }
+            db = database; ranks = r; lemmas = l; familyRanks = eff
         }
         _ready.value = true
     }
 
-    /** Frequency rank of a headword (0 = headword without frequency data), or null if not a headword. */
-    fun rank(word: String): Int? = ranks[word]
+    /**
+     * Frequency rank of a headword (0 = headword without frequency data), or null if not a headword.
+     * A British spelling or a transparent derivation gets its family's rank (see [WordFamily]).
+     */
+    fun rank(word: String): Int? = familyRanks[word] ?: ranks[word]
 
     fun lemma(surface: String): String = lemmatizer.lemma(surface)
 
@@ -92,8 +103,11 @@ class DictionaryRepository(private val context: Context) {
         db!!.rawQuery(
             "SELECT word FROM dict WHERE rank BETWEEN ? AND ? AND length(word) >= 3 AND (collins > 0 OR oxford > 0 OR tag != '') " +
                 "AND word NOT LIKE '%-%' AND word NOT LIKE '%''%' ORDER BY RANDOM() LIMIT ?",
-            arrayOf(band.from.toString(), band.to.toString(), n.toString()),
+            arrayOf(band.from.toString(), band.to.toString(), (n * 3).toString()),
         ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+            // "defence" is ranked as rare but tests the reader on "defense": leave such words out.
+            .filter { (rank(it) ?: 0) >= band.from }
+            .take(n)
     }
 
     companion object {

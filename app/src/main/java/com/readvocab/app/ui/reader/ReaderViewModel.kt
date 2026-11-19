@@ -15,6 +15,7 @@ import com.readvocab.core.ai.ContextualMeaning
 import com.readvocab.core.ai.SentenceExplanation
 import com.readvocab.core.text.ParaMarkup
 import com.readvocab.core.text.ProperNouns
+import com.readvocab.core.vocab.Calibration
 import com.readvocab.core.text.Tokenizer
 import com.readvocab.core.vocab.Highlight
 import com.readvocab.core.vocab.WordClassifier
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -89,6 +91,36 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
     /** Share of this book's words the reader knows, for the article header. */
     val coverage: StateFlow<Double?> = c.coverage.observe().map { it[bookId] }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** The estimate as it stood when the text was opened, before words looked up while reading changed it. */
+    private var estimateAtOpen: Double? = null
+    /** Whether the reader already said how this text felt (asked once per text). */
+    val feltAnswered = MutableStateFlow(true)
+
+    init {
+        viewModelScope.launch {
+            feltAnswered.value = withContext(Dispatchers.IO) { c.books.cacheFile(bookId, FELT_FILE).exists() }
+            estimateAtOpen = coverage.first { it != null }
+        }
+    }
+
+    /** "This text felt easier / right / harder than that": corrects all difficulty estimates a little. */
+    fun feltDifficulty(felt: Calibration.Felt) {
+        val predicted = estimateAtOpen ?: coverage.value ?: return
+        feltAnswered.value = true
+        viewModelScope.launch {
+            c.settings.update {
+                it.copy(
+                    difficultyShift = Calibration.adjust(it.difficultyShift.toDouble(), predicted, felt).toFloat(),
+                    calibrationCount = it.calibrationCount + 1,
+                )
+            }
+            withContext(Dispatchers.IO) {
+                runCatching { c.books.cacheFile(bookId, FELT_FILE).writeText("${felt.name} ${"%.3f".format(java.util.Locale.ROOT, predicted)}") }
+            }
+            messages.emit("谢谢，之后的难度估算会参考你的感受")
+        }
+    }
 
     val statuses: StateFlow<Map<String, WordStatus>> = c.words.observeAll()
         .map { list -> list.associate { it.lemma to it.status } }
@@ -383,6 +415,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
 
     companion object {
         /** In a review story, a target word read 12+ hours after its last review counts even if not due. */
+        private const val FELT_FILE = "felt.txt"
         private const val STORY_EARLY_REVIEW_MS = 12 * 60 * 60 * 1000L
         /** Longest pause between interactions that still counts as reading (a long paragraph). */
         private const val MAX_IDLE_GAP_MS = 2 * 60 * 1000L

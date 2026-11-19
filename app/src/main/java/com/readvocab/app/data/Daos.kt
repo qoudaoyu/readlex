@@ -83,6 +83,30 @@ interface FeedDao {
 }
 
 @Dao
+interface ArticleCheckDao {
+    @Query("SELECT * FROM article_checks")
+    fun observeAll(): Flow<List<ArticleCheckEntity>>
+
+    /**
+     * Recent items of enabled feeds not checked yet, newest first; a failed check is retried after
+     * [retryBefore], a short (paywalled) one after [shortRetryBefore], in case the reader has signed in since.
+     */
+    @Query(
+        "SELECT i.* FROM feed_items i JOIN feeds f ON f.url = i.feedUrl LEFT JOIN article_checks c ON c.link = i.link " +
+            "WHERE f.enabled = 1 AND i.publishedAt >= :since AND (c.link IS NULL " +
+            "OR (c.status = 'FAILED' AND c.checkedAt < :retryBefore) OR (c.status = 'SHORT' AND c.checkedAt < :shortRetryBefore)) " +
+            "ORDER BY i.publishedAt DESC LIMIT :limit",
+    )
+    suspend fun pending(since: Long, retryBefore: Long, shortRetryBefore: Long, limit: Int): List<FeedItemEntity>
+
+    @Upsert
+    suspend fun upsert(check: ArticleCheckEntity)
+
+    @Query("DELETE FROM article_checks WHERE link NOT IN (SELECT link FROM feed_items)")
+    suspend fun pruneOrphans()
+}
+
+@Dao
 interface WordDao {
     @Query("SELECT * FROM words")
     fun observeAll(): Flow<List<WordEntity>>

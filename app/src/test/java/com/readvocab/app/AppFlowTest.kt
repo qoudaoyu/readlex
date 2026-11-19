@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
@@ -213,12 +215,24 @@ class AppFlowTest {
                 com.readvocab.app.data.FeedItemEntity("https://example.com/b", feed[3].url, "The quiet comeback of the public library", "Why more people are borrowing books again.", now - 3 * 3600_000, now),
                 com.readvocab.app.data.FeedItemEntity("https://example.com/c", feed[4].url, "Ports reopen after the storm", "Ships return to harbour along the coast.", now - 26 * 3600_000, now),
             ))
+            // Difficulty checks as the background reader would leave them (no network in tests).
+            container.dictionary.ensureLoaded()
+            val articleText = org.json.JSONObject(org.json.JSONTokener(javaClass.classLoader!!.getResource("article-page.extracted.json")!!.readText()).nextValue() as String)
+                .getJSONArray("blocks").let { a -> (0 until a.length()).joinToString("\n\n") { a.getJSONObject(it).getString("text") } }
+            val counts = com.readvocab.core.vocab.Coverage.lemmaCounts(articleText) { container.dictionary.lemma(it) }
+                .filterKeys { container.dictionary.rank(it) != null }.mapValues { it.value * 4 }
+            val checks = container.database.checks()
+            checks.upsert(com.readvocab.app.data.ArticleCheckEntity("https://example.com/a", "OK", 950, counts.entries.joinToString(",") { "${it.key}:${it.value}" }, now))
+            checks.upsert(com.readvocab.app.data.ArticleCheckEntity("https://example.com/b", "SHORT", 0, "", now))
+            checks.upsert(com.readvocab.app.data.ArticleCheckEntity("https://example.com/c", "OK", 640, counts.entries.joinToString(",") { "${it.key}:${it.value * 2 / 3}" }, now))
         }
         compose.onNode(hasText("新闻")).performClick()
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("rooftop farms", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
         shot("8-news")
-        compose.onNode(hasText("Ports reopen after the storm")).performClick()
+        compose.onAllNodes(hasText("为你推荐")).fetchSemanticsNodes().let { assertTrue("recommendations shown", it.isNotEmpty()) }
+        compose.onNode(hasText("只读到摘要", substring = true)).assertExists()
+        compose.onAllNodes(hasText("Ports reopen after the storm"))[0].performClick()
         compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("import-article")).fetchSemanticsNodes().isNotEmpty() }
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()
@@ -244,6 +258,16 @@ class AppFlowTest {
         compose.waitForIdle()
         compose.onNode(hasText("17 Nov 2026", substring = true)).assertExists()
         shot("10-article")
+
+        // At the end of the article: how did it feel?
+        compose.onNode(hasTestTag("reader-list")).performScrollToNode(hasTestTag("felt-HARDER"))
+        compose.waitForIdle()
+        shot("10b-felt")
+        compose.onNode(hasTestTag("felt-HARDER")).performClick()
+        compose.waitUntil(5_000) { container.settings.current.calibrationCount == 1 }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("felt-HARDER")).fetchSemanticsNodes().isEmpty() }
+        compose.onNode(hasTestTag("reader-list")).performScrollToIndex(0)
+        compose.waitForIdle()
 
         // Night mode from the "Aa" sheet, kept in settings.
         compose.onNode(hasContentDescription("字号和夜间模式")).performClick()

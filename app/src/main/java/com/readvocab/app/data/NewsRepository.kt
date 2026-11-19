@@ -23,16 +23,24 @@ fun interface Fetcher {
 
 object HttpFetcher : Fetcher {
     private const val MAX_BYTES = 5 * 1024 * 1024
+    private const val FEED_ACCEPT = "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
 
-    override fun fetch(url: String): ByteArray {
+    override fun fetch(url: String): ByteArray = fetch(url, FEED_ACCEPT, "Mozilla/5.0 (Linux; Android) ReadVocab/1.0") { null }
+
+    /**
+     * @param cookies the cookies to send to each URL on the way (redirects included), so a page
+     *   fetched here sees the same sign-in as the in-app browser
+     */
+    fun fetch(url: String, accept: String, userAgent: String, cookies: (String) -> String?): ByteArray {
         var target = URL(url)
         repeat(5) {
             val conn = (target.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15_000
                 readTimeout = 20_000
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) ReadVocab/1.0")
-                setRequestProperty("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
+                setRequestProperty("User-Agent", userAgent)
+                setRequestProperty("Accept", accept)
+                cookies(target.toString())?.let { setRequestProperty("Cookie", it) }
             }
             try {
                 val code = conn.responseCode
@@ -49,7 +57,7 @@ object HttpFetcher : Fetcher {
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)
-                        if (out.size() > MAX_BYTES) throw IOException("订阅源太大")
+                        if (out.size() > MAX_BYTES) throw IOException("内容太大")
                     }
                     return out.toByteArray()
                 }

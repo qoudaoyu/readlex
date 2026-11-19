@@ -92,6 +92,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.readvocab.app.data.BookEntity
+import com.readvocab.core.vocab.Calibration
 import com.readvocab.core.vocab.Coverage
 import java.time.Instant
 import java.time.ZoneId
@@ -109,6 +110,7 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
     val sentence by vm.sentence.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
     val coverage by vm.coverage.collectAsStateWithLifecycle()
+    val feltAnswered by vm.feltAnswered.collectAsStateWithLifecycle()
     var showStyle by remember { mutableStateOf(false) }
     val layouts = remember { HashMap<Int, TextLayoutResult>() }
     val density = LocalDensity.current
@@ -296,6 +298,9 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
                     )
                     if (magazine && i == 0 && para.kind == ParaMarkup.Kind.TITLE) ArticleHeader(book!!, coverage, colors)
                 }
+            }
+            if (magazine && coverage != null && !feltAnswered) item {
+                FeltDifficulty(colors, onFelt = vm::feltDifficulty)
             }
             item {
                 Row(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -518,6 +523,31 @@ private fun ArticleHeader(book: BookEntity, coverage: Double?, colors: ReaderCol
         }
         HorizontalDivider(color = colors.rule, thickness = 1.dp)
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** At the end of an article: how did it feel? The answer corrects later difficulty estimates. */
+@Composable
+private fun FeltDifficulty(colors: ReaderColors, onFelt: (Calibration.Felt) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
+        HorizontalDivider(color = colors.rule, thickness = 1.dp)
+        Text(
+            "这篇读下来，难度感觉如何？",
+            fontFamily = ReaderSans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = colors.heading,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "你的回答会让之后的难度估算和推荐更准。",
+            fontFamily = ReaderSans, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, color = colors.muted,
+            modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Calibration.Felt.entries.forEach { f ->
+                OutlinedButton(onClick = { onFelt(f) }, modifier = Modifier.testTag("felt-${f.name}")) {
+                    Text(f.label, fontFamily = ReaderSans, color = colors.text)
+                }
+            }
+        }
     }
 }
 

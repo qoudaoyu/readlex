@@ -125,3 +125,25 @@ data class FeedItemEntity(
     val publishedAt: Long,
     val fetchedAt: Long,
 )
+
+/**
+ * The difficulty check of a news item: its article was read in the background and its words
+ * counted, so its coverage can be shown before the reader opens it.
+ */
+@Entity(tableName = "article_checks")
+data class ArticleCheckEntity(
+    @PrimaryKey val link: String,
+    /** OK, SHORT (too little text: a paywall, a video or a live page) or FAILED. */
+    val status: String,
+    /** Words of body text found. */
+    val words: Int,
+    /** Dictionary lemmas with their counts, "lemma:count,lemma:count"; names left out. */
+    val lemmas: String,
+    val checkedAt: Long,
+) {
+    companion object {
+        const val OK = "OK"
+        const val SHORT = "SHORT"
+        const val FAILED = "FAILED"
+    }
+}

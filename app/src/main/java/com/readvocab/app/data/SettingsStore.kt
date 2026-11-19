@@ -1,5 +1,6 @@
 package com.readvocab.app.data
 
+import com.readvocab.core.vocab.KnownCurve
 import android.content.Context
 import com.readvocab.core.ai.AiConfig
 import com.readvocab.core.ai.ProviderType
@@ -35,8 +36,17 @@ data class AppSettings(
     val readerTheme: String = "SYSTEM",
     /** Which set of built-in news feeds has been offered; later sets are added once to existing lists. */
     val feedDefaults: Int = 0,
+    /** From the vocabulary test: how likely each frequency rank is known (see KnownCurve); empty before a test. */
+    val knownCurve: String = "",
+    /** Calibration from "harder / easier than estimated" answers after reading; 0 = none. */
+    val difficultyShift: Float = 0f,
+    val calibrationCount: Int = 0,
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
+
+    /** How likely the reader knows a word they have no record of, by frequency rank. */
+    val curve: KnownCurve get() =
+        KnownCurve.decode(knownCurve, difficultyShift.toDouble()) ?: KnownCurve.fromBoundary(knownBoundary, difficultyShift.toDouble())
 
     companion object {
         /** Before the test, assume a typical learner who passed CET-4. */
@@ -77,6 +87,9 @@ class SettingsStore(context: Context) {
             lastNewsRefresh = prefs.getLong("lastNewsRefresh", 0),
             readerTheme = prefs.getString("readerTheme", d.readerTheme)!!,
             feedDefaults = prefs.getInt("feedDefaults", 0),
+            knownCurve = prefs.getString("knownCurve", "")!!,
+            difficultyShift = prefs.getFloat("difficultyShift", 0f),
+            calibrationCount = prefs.getInt("calibrationCount", 0),
         )
     }
 
@@ -101,6 +114,9 @@ class SettingsStore(context: Context) {
             .putLong("lastNewsRefresh", s.lastNewsRefresh)
             .putString("readerTheme", s.readerTheme)
             .putInt("feedDefaults", s.feedDefaults)
+            .putString("knownCurve", s.knownCurve)
+            .putFloat("difficultyShift", s.difficultyShift)
+            .putInt("calibrationCount", s.calibrationCount)
             .apply()
         _settings.value = s
     }

@@ -1,6 +1,7 @@
 package com.readvocab.app.data
 
 import com.readvocab.core.vocab.Coverage
+import com.readvocab.core.vocab.WordStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -31,9 +32,10 @@ class CoverageRepository(
             .mapLatest { (bookList, wordList, s) ->
                 dictionary.ensureLoaded()
                 val statuses = wordList.associate { it.lemma to it.status }
+                val curve = s.curve
                 bookList.mapNotNull { book ->
                     val c = countsFor(book.id)
-                    Coverage.of(c) { Coverage.isKnown(dictionary.rank(it), statuses[it], s.knownBoundary) }?.let { book.id to it }
+                    Coverage.expected(c) { Coverage.knownProbability(dictionary.rank(it), statuses[it], curve) }?.let { book.id to it }
                 }.toMap()
             }
             .flowOn(Dispatchers.Default)
@@ -42,10 +44,19 @@ class CoverageRepository(
     suspend fun ofText(text: String): Double? = withContext(Dispatchers.Default) {
         dictionary.ensureLoaded()
         val statuses = words.getAllStatuses()
-        val boundary = settings.current.knownBoundary
-        Coverage.of(Coverage.lemmaCounts(text) { dictionary.lemma(it) }) {
-            Coverage.isKnown(dictionary.rank(it), statuses[it], boundary)
-        }
+        ofCounts(Coverage.lemmaCounts(text) { dictionary.lemma(it) }, statuses)
+    }
+
+    /** Expected number of different words in [counts] the reader does not know yet. */
+    fun expectedUnknown(counts: Map<String, Int>, statuses: Map<String, WordStatus>): Int {
+        val curve = settings.current.curve
+        return counts.keys.sumOf { 1 - (Coverage.knownProbability(dictionary.rank(it), statuses[it], curve) ?: 1.0) }.toInt()
+    }
+
+    /** Coverage from lemma counts, with the current word list and settings. */
+    fun ofCounts(counts: Map<String, Int>, statuses: Map<String, WordStatus>): Double? {
+        val curve = settings.current.curve
+        return Coverage.expected(counts) { Coverage.knownProbability(dictionary.rank(it), statuses[it], curve) }
     }
 
     private suspend fun countsFor(bookId: Long): Map<String, Int> {
