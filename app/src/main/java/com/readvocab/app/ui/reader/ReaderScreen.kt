@@ -292,6 +292,7 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
                         colors = colors,
                         lede = i == ledeIndex,
                         highlightFor = highlightFor,
+                        phraseShown = remember(para, statuses, settings) { { span: PhraseSpan -> vm.phraseShown(para, span, statuses, settings) } },
                         selected = selected,
                         onLayout = { layouts[i] = it },
                         onTap = { vm.onTap(i, it) },
@@ -323,6 +324,7 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             onAdd = vm::addToWordList,
             onRemove = vm::removeFromWordList,
             onSetStatus = vm::setStatus,
+            onWordInstead = vm::lookupWordInstead,
         )
     }
     sentence?.let { s -> SentenceSheet(s, onDismiss = vm::dismissSentence, onRetry = vm::explainSentence, onSpeak = speak) }
@@ -401,36 +403,63 @@ private fun ParagraphText(
     colors: ReaderColors,
     lede: Boolean,
     highlightFor: (String) -> Highlight,
+    phraseShown: (PhraseSpan) -> Boolean,
     selected: List<IntRange>,
     onLayout: (TextLayoutResult) -> Unit,
     onTap: (Int) -> Unit,
 ) {
     val dark = colors.dark
+    val dottedColor = HighlightColors.newWord(dark)
     val selectionColor = colors.accent.copy(alpha = 0.18f)
     // Uppercase a subheading only when that keeps every offset where the tokens expect it.
     val shown = if (para.kind == ParaMarkup.Kind.HEADING) para.text.uppercase().takeIf { it.length == para.text.length } ?: para.text else para.text
     // Word and selection shading is drawn from the text layout rather than as background spans:
     // Android places span backgrounds wrongly in a paragraph whose lines differ in height (the
     // raised initial makes the first line taller), so the shading slid off its words.
-    val shading = remember(para, highlightFor, colors) {
+    // Phrases worth showing, and how: shaded (on the word list), dotted (picked by AI) or underlined (holds a new word).
+    val phraseMarks = remember(para, highlightFor, phraseShown) {
+        para.phrases.filter(phraseShown).map { it to highlightFor(it.phrase) }
+    }
+    val inPhrase = remember(phraseMarks) {
+        HashSet<Int>().apply { phraseMarks.forEach { (p, _) -> for (i in p.firstToken..p.lastToken) add(i) } }
+    }
+    val shading = remember(para, highlightFor, colors, phraseMarks) {
         buildList {
-            for (t in para.tokens) when (highlightFor(t.lemma)) {
-                Highlight.LEARNING -> add(t.start until t.end to HighlightColors.learning(dark))
-                Highlight.FAMILIAR -> add(t.start until t.end to HighlightColors.familiar(dark))
+            for ((p, h) in phraseMarks) when (h) {
+                Highlight.LEARNING -> add(p.start until p.end to HighlightColors.learning(dark))
+                Highlight.FAMILIAR -> add(p.start until p.end to HighlightColors.familiar(dark))
                 else -> Unit
+            }
+            val shadedPhrase = { i: Int -> phraseMarks.any { (p, h) -> i in p.firstToken..p.lastToken && (h == Highlight.LEARNING || h == Highlight.FAMILIAR) } }
+            para.tokens.forEachIndexed { i, t ->
+                if (shadedPhrase(i)) return@forEachIndexed
+                when (highlightFor(t.lemma)) {
+                    Highlight.LEARNING -> add(t.start until t.end to HighlightColors.learning(dark))
+                    Highlight.FAMILIAR -> add(t.start until t.end to HighlightColors.familiar(dark))
+                    else -> Unit
+                }
             }
         }
     }
-    val annotated = remember(para, shown, highlightFor, colors, lede, fontSizeSp) {
+    val dotted = remember(phraseMarks) {
+        phraseMarks.filter { (p, h) -> p.kind == PhraseSpan.AI && h != Highlight.LEARNING && h != Highlight.FAMILIAR }.map { it.first.start until it.first.end }
+    }
+    val annotated = remember(para, shown, highlightFor, colors, lede, fontSizeSp, phraseMarks) {
         buildAnnotatedString {
             append(shown)
             // The opening paragraph of an article starts with a raised initial in the accent colour.
             if (lede && shown.isNotEmpty() && shown[0].isLetter()) {
                 addStyle(SpanStyle(fontSize = (fontSizeSp * 2.4f).sp, fontWeight = FontWeight.Bold, color = colors.accent), 0, 1)
             }
-            for (t in para.tokens) {
+            // A dictionary phrase holding a new word is underlined as a whole: "market capitalization", not just its second word.
+            for ((p, h) in phraseMarks) {
+                if (p.kind != PhraseSpan.AI && h != Highlight.LEARNING && h != Highlight.FAMILIAR) {
+                    addStyle(SpanStyle(color = HighlightColors.newWord(dark), textDecoration = TextDecoration.Underline), p.start, p.end)
+                }
+            }
+            para.tokens.forEachIndexed { i, t ->
                 // A name is only marked if the reader put it on the word list themselves.
-                if (t.name) continue
+                if (t.name || i in inPhrase) return@forEachIndexed
                 if (highlightFor(t.lemma) == Highlight.NEW) {
                     addStyle(SpanStyle(color = HighlightColors.newWord(dark), textDecoration = TextDecoration.Underline), t.start, t.end)
                 }
@@ -472,24 +501,43 @@ private fun ParagraphText(
                 val radius = CornerRadius(2.dp.toPx())
                 for ((range, color) in shading) {
                     if (range.isEmpty() || range.last >= n) continue
-                    val line = l.getLineForOffset(range.first)
-                    if (l.getLineForOffset(range.last) != line) {
-                        drawPath(l.getPathForRange(range.first, range.last + 1), color)
-                        continue
+                    for ((left, right, base) in lineRuns(l, range)) {
+                        drawRoundRect(color, topLeft = Offset(left - 1.dp.toPx(), base - em * 0.95f), size = Size(right - left + 2.dp.toPx(), em * 1.25f), cornerRadius = radius)
                     }
-                    val left = l.getHorizontalPosition(range.first, usePrimaryDirection = true)
-                    val right = l.getHorizontalPosition(range.last + 1, usePrimaryDirection = true).let {
-                        // At a line end the next offset may sit on the following line.
-                        if (it <= left) l.getBoundingBox(range.last).right else it
+                }
+                // AI-picked phrases: a dotted line under the whole phrase.
+                val dot = 1.5.dp.toPx()
+                for (range in dotted) {
+                    if (range.isEmpty() || range.last >= n) continue
+                    for ((left, right, base) in lineRuns(l, range)) {
+                        var x = left
+                        while (x < right) {
+                            drawCircle(dottedColor, radius = dot / 2, center = Offset(x + dot / 2, base + em * 0.22f))
+                            x += dot * 2.2f
+                        }
                     }
-                    val base = l.getLineBaseline(line)
-                    drawRoundRect(color, topLeft = Offset(left - 1.dp.toPx(), base - em * 0.95f), size = Size(right - left + 2.dp.toPx(), em * 1.25f), cornerRadius = radius)
                 }
             }
             .pointerInput(para) {
                 detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
             },
     )
+}
+
+/** Where [range] sits on each line it covers: (left, right, baseline). */
+private fun lineRuns(l: TextLayoutResult, range: IntRange): List<Triple<Float, Float, Float>> {
+    val first = l.getLineForOffset(range.first)
+    val last = l.getLineForOffset(range.last)
+    return (first..last).map { line ->
+        val left = if (line == first) l.getHorizontalPosition(range.first, usePrimaryDirection = true) else l.getLineLeft(line)
+        val right = if (line == last) {
+            l.getHorizontalPosition(range.last + 1, usePrimaryDirection = true).let {
+                // At a line end the next offset may sit on the following line.
+                if (it <= left) l.getBoundingBox(range.last).right else it
+            }
+        } else l.getLineRight(line)
+        Triple(left, right, l.getLineBaseline(line))
+    }
 }
 
 /** Under an article's headline: the standfirst in italics, then a ruled bar with byline, date, length and coverage. */

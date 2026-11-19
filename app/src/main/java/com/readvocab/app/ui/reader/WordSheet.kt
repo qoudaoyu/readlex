@@ -70,6 +70,7 @@ fun WordSheet(
     onAdd: () -> Unit,
     onRemove: () -> Unit,
     onSetStatus: (WordStatus) -> Unit,
+    onWordInstead: () -> Unit = {},
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)) {
         Column(
@@ -81,6 +82,15 @@ fun WordSheet(
                 Spacer(Modifier.size(8.dp))
                 state.entry?.phonetic?.takeIf { it.isNotBlank() }?.let { Text("/$it/", style = MaterialTheme.typography.bodyMedium) }
                 IconButton(onClick = { onSpeak(state.lemma) }) { Icon(Icons.AutoMirrored.Outlined.VolumeUp, "发音") }
+            }
+            if (state.isPhrase) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (state.phraseMeaning != null) "短语 · AI 从本文中挑出" else "短语",
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f),
+                    )
+                    state.alsoWord?.let { w -> TextButton(onClick = onWordInstead) { Text("只查单词 ${w.surface}") } }
+                }
             }
             if (!state.surface.equals(state.lemma, ignoreCase = true)) {
                 Text("文中形式：${state.surface}", style = MaterialTheme.typography.bodySmall)
@@ -107,7 +117,7 @@ fun WordSheet(
             if (state.entry != null) {
                 Text(state.entry.translation.lines().take(6).joinToString("\n"), style = MaterialTheme.typography.bodyLarge)
             } else {
-                Text("词典里没有这个词（可能是人名、地名或拼写变体）。", style = MaterialTheme.typography.bodyMedium)
+                Text(if (state.isPhrase) "词典里没有这个短语，可以用下面的 AI 解释。" else "词典里没有这个词（可能是人名、地名或拼写变体）。", style = MaterialTheme.typography.bodyMedium)
             }
 
             HorizontalDivider()

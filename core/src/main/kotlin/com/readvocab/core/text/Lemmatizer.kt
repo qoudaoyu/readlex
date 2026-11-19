@@ -10,6 +10,8 @@ package com.readvocab.core.text
 class Lemmatizer(
     private val formToLemma: (String) -> String?,
     private val isWord: (String) -> Boolean,
+    /** Frequency rank of a headword (0 or null = unknown); lets a common word keep its own entry. */
+    private val rank: (String) -> Int? = { null },
 ) {
     fun normalize(surface: String): String {
         var w = surface.lowercase().replace('’', '\'')
@@ -20,7 +22,13 @@ class Lemmatizer(
 
     fun lemma(surface: String): String {
         val w = normalize(surface)
-        formToLemma(w)?.let { return it }
+        formToLemma(w)?.let { lemma ->
+            // "according" is far more common than "accord", "mapped" far rarer than "map":
+            // a form much more common than its lemma is a word in its own right.
+            val own = rank(w) ?: 0
+            val base = rank(lemma) ?: 0
+            return if (own > 0 && base > 0 && own * 2 < base) w else lemma
+        }
         if (isWord(w)) return w
         for (c in candidates(w)) if (isWord(c)) return formToLemma(c) ?: c
         return w

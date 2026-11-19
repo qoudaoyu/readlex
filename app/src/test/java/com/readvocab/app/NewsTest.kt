@@ -58,7 +58,7 @@ class NewsTest {
         assertTrue("coverage $cov", cov in 0.85..0.995)
         val byBook = c.coverage.observe().first()
         assertEquals(cov, byBook[id]!!, 0.02)
-        assertTrue(File(app.filesDir, "books/$id/lemmas-v2.tsv").exists())
+        assertTrue(File(app.filesDir, "books/$id/lemmas-v3.tsv").exists())
         // Learning a word from the article lowers its coverage.
         val unknown = article.text.split(Regex("\\W+")).map { c.dictionary.lemma(it) }.first { (c.dictionary.rank(it) ?: 0) in 1..5000 }
         c.words.setStatus(unknown, WordStatus.LEARNING)

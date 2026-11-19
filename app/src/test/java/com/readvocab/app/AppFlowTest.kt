@@ -247,7 +247,10 @@ class AppFlowTest {
             // Shaded words in the opening paragraph, whose first line is taller (raised initial).
             container.words.setStatus("shopkeeper", WordStatus.LEARNING)
             container.words.setStatus("cellar", WordStatus.FAMILIAR)
-            container.articles.save(container.articles.parseResult(raw))
+            container.articles.save(container.articles.parseResult(raw)).also { id ->
+                // What AI picked from this article (no network in tests): dotted in the text.
+                container.books.cacheFile(id, "phrases-ai.json").writeText("""[{"text":"give up","phrase":"give up","meaning":"让出（土地）"}]""")
+            }
         }
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()

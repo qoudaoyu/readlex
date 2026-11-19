@@ -31,9 +31,9 @@ core/   纯 Kotlin（JVM）模块，可直接单测
   ai/        AiProvider 抽象 + AnthropicProvider + OpenAiCompatibleProvider + AiTutor（提示词与 JSON 解析）
   importer/  TXT / EPUB / HTML 解析
 app/    Android（Jetpack Compose + Room）
-  data/      Room 实体与 DAO、词典仓库（assets/ecdict.db）、书籍与单词仓库、设置
+  data/      Room 实体与 DAO、词典仓库（assets/ecdict.db.gzip）、书籍与单词仓库、设置
   ui/        书架、阅读器、查词卡、复习、生词本、词汇量测试、设置
-tools/build_dict.py  从 ECDICT 生成 app/src/main/assets/ecdict.db
+tools/build_dict.py  从 ECDICT 生成 app/src/main/assets/ecdict.db.gzip
 ```
 
 新增 AI 能力（例如按词汇量改写文章、生成例句）：在 `core/ai/AiTutor.kt` 加一个方法即可，所有服务商自动可用；新增服务商：实现 `AiProvider` 接口并在 `AiProviders.create` 里注册。
@@ -54,7 +54,7 @@ release 包目前用 debug 签名，方便直接安装；正式发布前请换�
 ```bash
 curl -LO https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv
 curl -LO https://raw.githubusercontent.com/skywind3000/ECDICT/master/lemma.en.txt
-python3 tools/build_dict.py ecdict.csv lemma.en.txt app/src/main/assets/ecdict.db
+python3 tools/build_dict.py ecdict.csv lemma.en.txt app/src/main/assets/ecdict.db  # writes ecdict.db.gzipip
 ```
 
 ## 后续（V2 / V3）

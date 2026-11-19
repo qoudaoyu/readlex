@@ -15,6 +15,9 @@ import com.readvocab.core.ai.ContextualMeaning
 import com.readvocab.core.ai.SentenceExplanation
 import com.readvocab.core.text.ParaMarkup
 import com.readvocab.core.text.ProperNouns
+import com.readvocab.core.text.PhraseEntry
+import com.readvocab.core.text.PhraseMatcher
+import com.readvocab.core.ai.ArticlePhrase
 import com.readvocab.core.vocab.Calibration
 import com.readvocab.core.text.Tokenizer
 import com.readvocab.core.vocab.Highlight
@@ -40,11 +43,23 @@ import kotlinx.coroutines.withContext
 
 /** [name]: a person, place or organisation, which is never flagged as a new word. */
 data class TokenInfo(val start: Int, val end: Int, val surface: String, val lemma: String, val name: Boolean = false)
+/**
+ * A phrase in a paragraph: from the dictionary ([PhraseEntry.GENERAL], [PhraseEntry.TERM]) or picked
+ * by AI for this article ([AI], with its [meaning] here). Characters [start, end), tokens [firstToken, lastToken].
+ */
+data class PhraseSpan(
+    val start: Int, val end: Int, val phrase: String, val kind: Int, val firstToken: Int, val lastToken: Int,
+    val meaning: String? = null,
+) {
+    companion object { const val AI = 3 }
+}
+
 data class Para(
     val text: String,
     val tokens: List<TokenInfo>,
     val sentences: List<IntRange>,
     val kind: ParaMarkup.Kind = ParaMarkup.Kind.BODY,
+    val phrases: List<PhraseSpan> = emptyList(),
 ) {
     fun sentenceIndexAt(offset: Int): Int =
         sentences.indexOfFirst { offset <= it.last }.let { if (it < 0) sentences.lastIndex else it }
@@ -78,7 +93,13 @@ data class LookupState(
     val entry: DictEntry?,
     val word: WordEntity?,
     val ai: Async<ContextualMeaning> = Async.Idle,
-)
+    /** For a phrase: the word that was tapped inside it, to look up on its own instead. */
+    val alsoWord: TokenInfo? = null,
+    /** For a phrase picked by AI: its meaning in this text. */
+    val phraseMeaning: String? = null,
+) {
+    val isPhrase: Boolean get() = ' ' in lemma
+}
 
 data class SentenceState(val sentence: String, val context: String, val count: Int = 1, val ai: Async<SentenceExplanation> = Async.Idle)
 
@@ -149,7 +170,9 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
             val book = c.books.get(bookId) ?: return@launch
             val chapters = c.books.chapters(bookId)
             _state.update { it.copy(book = book, chapters = chapters) }
+            c.dictionary.ensureLoaded()
             loadChapter(book.chapterIndex.coerceIn(0, (chapters.size - 1).coerceAtLeast(0)), book.paragraphIndex)
+            fetchAiPhrases(book)
         }
     }
 
@@ -164,13 +187,11 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
             val names = ProperNouns.find(parsed.map { it.second }) {
                 parsed[it].first == ParaMarkup.Kind.TITLE || parsed[it].first == ParaMarkup.Kind.HEADING
             }
+            val ai = aiPhrases()
             parsed.mapIndexed { i, (kind, p) ->
-                Para(
-                    p,
-                    Tokenizer.tokenize(p).map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text), t.start in names[i]) },
-                    Tokenizer.sentenceRanges(p),
-                    kind,
-                )
+                val raw = Tokenizer.tokenize(p)
+                val tokens = raw.map { t -> TokenInfo(t.start, t.end, t.text, c.dictionary.lemma(t.text), t.start in names[i]) }
+                Para(p, tokens, Tokenizer.sentenceRanges(p), kind, phrasesIn(p, raw, tokens, ai))
             }.filter { it.text.isNotEmpty() }
         }
         seenUpTo = -1
@@ -266,6 +287,95 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         }
     }
 
+    // ---- Phrases ----
+
+    private var aiPhraseList: List<ArticlePhrase>? = null
+
+    /** The AI's phrases for this text, from the cache file; null if not fetched yet. */
+    private fun aiPhrases(): List<ArticlePhrase> {
+        aiPhraseList?.let { return it }
+        val file = c.books.cacheFile(bookId, AI_PHRASES_FILE)
+        val list = if (file.exists()) runCatching {
+            val arr = org.json.JSONArray(file.readText())
+            (0 until arr.length()).map { arr.getJSONObject(it).let { o -> ArticlePhrase(o.optString("text"), o.optString("phrase"), o.optString("meaning")) } }
+        }.getOrNull() else null
+        aiPhraseList = list
+        return list.orEmpty()
+    }
+
+    /** Dictionary phrases in a paragraph, with the AI's phrases taking the place of any they overlap. */
+    private fun phrasesIn(text: String, raw: List<com.readvocab.core.text.Token>, tokens: List<TokenInfo>, ai: List<ArticlePhrase>): List<PhraseSpan> {
+        val fromAi = ArrayList<PhraseSpan>()
+        val lower = text.lowercase()
+        for (a in ai) {
+            val needle = a.text.trim().lowercase()
+            if (needle.isEmpty()) continue
+            var at = lower.indexOf(needle)
+            while (at >= 0) {
+                val end = at + needle.length
+                val first = tokens.indexOfFirst { it.start == at }
+                val last = tokens.indexOfLast { it.end == end }
+                if (first >= 0 && last >= first && fromAi.none { at < it.end && end > it.start }) {
+                    fromAi += PhraseSpan(at, end, a.phrase.ifBlank { needle }.lowercase(), PhraseSpan.AI, first, last, a.meaning)
+                }
+                at = lower.indexOf(needle, at + 1)
+            }
+        }
+        val fromDict = PhraseMatcher.match(text, raw, tokens.map { it.lemma }) { c.dictionary.phrasesStartingWith(it) }
+            .filter { m -> fromAi.none { m.start < it.end && m.end > it.start } }
+            .map { PhraseSpan(it.start, it.end, it.phrase, it.kind, it.firstToken, it.lastToken) }
+        return (fromAi + fromDict).sortedBy { it.start }
+    }
+
+    /**
+     * Asks AI once for this text's hard phrases (articles and AI stories only: a book would cost too much),
+     * then marks them in the open chapter.
+     */
+    private fun fetchAiPhrases(book: BookEntity) {
+        if (!(book.isArticle || book.isStory) || !c.settings.current.aiPhrases) return
+        if (c.books.cacheFile(bookId, AI_PHRASES_FILE).exists()) return
+        val tutor = c.tutor() ?: return
+        viewModelScope.launch {
+            val list = try {
+                val text = withContext(Dispatchers.IO) { c.books.fullText(bookId) }
+                withContext(Dispatchers.IO) { tutor.articlePhrases(text, c.settings.current.vocabSize.takeIf { it > 0 } ?: c.settings.current.knownBoundary) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                return@launch // try again next time the text is opened
+            }
+            withContext(Dispatchers.IO) {
+                val arr = org.json.JSONArray()
+                list.forEach { arr.put(org.json.JSONObject().put("text", it.text).put("phrase", it.phrase).put("meaning", it.meaning)) }
+                runCatching { c.books.cacheFile(bookId, AI_PHRASES_FILE).writeText(arr.toString()) }
+            }
+            aiPhraseList = list
+            val paras = withContext(Dispatchers.Default) {
+                _state.value.paragraphs.map { p ->
+                    p.copy(phrases = phrasesIn(p.text, Tokenizer.tokenize(p.text), p.tokens, list))
+                }
+            }
+            _state.update { it.copy(paragraphs = paras) }
+        }
+    }
+
+    /** Whether a phrase is worth showing: on the word list, picked by AI, or holding a word the reader does not know. */
+    fun phraseShown(para: Para, span: PhraseSpan, statuses: Map<String, WordStatus>, s: AppSettings): Boolean {
+        val st = statuses[span.phrase]
+        if (st != null) return st == WordStatus.LEARNING || st == WordStatus.FAMILIAR || st == WordStatus.NEW
+        if (span.kind == PhraseSpan.AI) return true
+        return (span.firstToken..span.lastToken).any { i ->
+            val t = para.tokens[i]
+            !t.name && highlight(t.lemma, statuses, s) == Highlight.NEW
+        }
+    }
+
+    private fun phraseAt(para: Para, offset: Int): PhraseSpan? {
+        val span = para.phrases.firstOrNull { offset >= it.start && offset < it.end } ?: return null
+        // Any shown phrase, and any general phrase even if all its words are known (agree with, catch up);
+        // a term made of known words (process form) is more often a coincidence than the term.
+        return span.takeIf { it.kind != PhraseEntry.TERM || phraseShown(para, it, statuses.value, c.settings.current) }
+    }
+
     private fun findToken(para: Para, offset: Int): TokenInfo? =
         para.tokens.firstOrNull { offset >= it.start && offset < it.end } ?: para.tokens.firstOrNull { offset == it.end }
 
@@ -275,6 +385,10 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         val para = _state.value.paragraphs.getOrNull(paraIndex) ?: return
         val token = findToken(para, offset) ?: return
         val sentence = Tokenizer.sentenceAt(para.text, token.start)
+        phraseAt(para, offset)?.let { span ->
+            showPhrase(span, para.text.substring(span.start, span.end), sentence, token)
+            return
+        }
         tapped += token.lemma
         aiJob?.cancel()
         viewModelScope.launch {
@@ -286,11 +400,38 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         }
     }
 
+    private fun showPhrase(span: PhraseSpan, surface: String, sentence: String, word: TokenInfo) {
+        aiJob?.cancel()
+        viewModelScope.launch {
+            val entry = if (span.kind == PhraseSpan.AI) {
+                c.dictionary.lookupPhrase(span.phrase)?.let { d -> d.copy(translation = "本文中：${span.meaning}\n${d.translation}") }
+                    ?: DictEntry(span.phrase, "", "本文中：${span.meaning}", emptyList(), 0, "")
+            } else c.dictionary.lookupPhrase(span.phrase)
+            val w = c.words.onLookup(span.phrase)
+            _lookup.value = LookupState(surface, span.phrase, sentence, entry, w, alsoWord = word, phraseMeaning = span.meaning)
+            if (c.settings.current.autoAi && c.tutor() != null) fetchMeaning()
+        }
+    }
+
+    /** From a phrase's card, look up the single word that was tapped. */
+    fun lookupWordInstead() {
+        val l = _lookup.value ?: return
+        val token = l.alsoWord ?: return
+        tapped += token.lemma
+        aiJob?.cancel()
+        viewModelScope.launch {
+            val entry = c.dictionary.lookup(token.lemma) ?: c.dictionary.lookup(token.surface.lowercase())
+            val lemma = entry?.word ?: token.lemma
+            _lookup.value = LookupState(token.surface, lemma, l.sentence, entry, c.words.onLookup(lemma))
+            if (c.settings.current.autoAi && c.tutor() != null) fetchMeaning()
+        }
+    }
+
     /** The prominent "加入生词表" button on the word card. */
     fun addToWordList() {
         val l = _lookup.value ?: return
         viewModelScope.launch {
-            val meaning = (l.ai as? Async.Done)?.value?.meaning
+            val meaning = (l.ai as? Async.Done)?.value?.meaning ?: l.phraseMeaning
             val w = c.words.addToLearning(l.lemma, l.surface, l.sentence, bookId, _state.value.book?.title.orEmpty(), meaning)
             _lookup.update { cur -> if (cur?.lemma == l.lemma) cur.copy(word = w) else cur }
             messages.tryEmit("已加入生词表：${l.lemma}")
@@ -416,6 +557,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
     companion object {
         /** In a review story, a target word read 12+ hours after its last review counts even if not due. */
         private const val FELT_FILE = "felt.txt"
+        private const val AI_PHRASES_FILE = "phrases-ai.json"
         private const val STORY_EARLY_REVIEW_MS = 12 * 60 * 60 * 1000L
         /** Longest pause between interactions that still counts as reading (a long paragraph). */
         private const val MAX_IDLE_GAP_MS = 2 * 60 * 1000L

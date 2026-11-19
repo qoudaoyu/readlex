@@ -67,7 +67,7 @@ class WordbookViewModel(private val c: AppContainer) : ViewModel() {
     val rows = tab.flatMapLatest { t ->
         c.words.observeByStatus(TABS[t].second).map { list ->
             c.dictionary.ensureLoaded()
-            list.map { WordRow(it, c.dictionary.lookup(it.lemma)?.brief.orEmpty()) }
+            list.map { WordRow(it, c.dictionary.lookup(it.lemma)?.brief ?: c.words.encounters(it.lemma).firstNotNullOfOrNull { e -> e.aiMeaning }.orEmpty()) }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

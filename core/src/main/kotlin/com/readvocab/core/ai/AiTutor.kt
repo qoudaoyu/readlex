@@ -29,6 +29,20 @@ data class SentenceExplanation(
 /** A word the review story must use, with the meaning the learner met it in. */
 data class StoryWord(val lemma: String, val meaning: String)
 
+/** A multi-word expression in an article whose meaning does not follow from its words. */
+@Serializable
+data class ArticlePhrase(
+    /** Exactly as it appears in the article (caught up with). */
+    val text: String = "",
+    /** Dictionary form (catch up with). */
+    val phrase: String = "",
+    /** Chinese meaning in this article. */
+    val meaning: String = "",
+)
+
+@Serializable
+data class ArticlePhrases(val phrases: List<ArticlePhrase> = emptyList())
+
 @Serializable
 data class ReviewStory(val title: String = "", val body: String = "")
 
@@ -88,6 +102,25 @@ class AiTutor(private val provider: AiProvider) {
         return story
     }
 
+    /**
+     * Picks the phrasal verbs, idioms, fixed expressions and terms in an article that a learner
+     * who knows each word may still not understand, with their meaning in this article.
+     */
+    fun articlePhrases(article: String, vocabSize: Int): List<ArticlePhrase> {
+        val user = buildString {
+            appendLine("读者是中文母语的英语学习者，词汇量约 ${vocabSize} 词。下面是一篇英文文章。")
+            appendLine("请找出文中读者即使认识每个单词、也可能看不懂的多词表达：短语动词（如 catch up with）、习语、固定搭配、专业术语（如 market capitalization）。")
+            appendLine("不要列意思能从单词直接推出的普通组合（如 agree with、very good、the government）。最多 20 个，按在文中出现的顺序。")
+            appendLine()
+            appendLine("文章：")
+            appendLine(article.take(12_000))
+            appendLine()
+            appendLine("""请只输出一个 JSON 对象：{"phrases": [{"text": "与原文完全一致的片段（保留原文的时态和单复数）", "phrase": "词典形式", "meaning": "在本文中的中文意思，12 字以内"}]}""")
+        }
+        return parse<ArticlePhrases>(provider.complete(SYSTEM_PHRASES, user, 6000)).phrases
+            .filter { it.text.trim().contains(' ') && it.meaning.isNotBlank() }
+    }
+
     /** Quick round trip used by the settings screen. */
     fun ping(): String = provider.complete("You are a test endpoint.", "Reply with the single word: OK", 2000).trim()
 
@@ -107,6 +140,9 @@ class AiTutor(private val provider: AiProvider) {
         private const val SYSTEM_SENTENCE =
             "你是面向中文母语者的英语阅读老师。帮助学习者理解难句：给出自然的中文翻译，并讲清楚句子结构。" +
                 "只输出 JSON，不要输出其他文字。"
+
+        private const val SYSTEM_PHRASES =
+            "你是帮助中国学生读英文报刊的老师，擅长发现学生容易误解的短语和术语。只输出 JSON，不要输出其他文字。"
 
         private const val SYSTEM_STORY =
             "你是为英语学习者写分级读物的作者。你写的文章自然、有趣，难度严格控制在读者水平，" +

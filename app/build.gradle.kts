@@ -13,8 +13,8 @@ android {
         applicationId = "com.readvocab.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.6.0"
+        versionCode = 13
+        versionName = "0.7.0"
     }
 
     buildTypes {
@@ -31,7 +31,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
-    androidResources { noCompress += "db" }
+    androidResources { noCompress += "gzip" }
     packaging {
         resources {
             excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/*.kotlin_module", "META-INF/versions/9/previous-compilation-data.bin")

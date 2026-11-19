@@ -230,6 +230,11 @@ fun SettingsScreen(onStartTest: () -> Unit) {
                 }
             }
             SwitchRow("点词时自动请求 AI 语境释义", "关闭时需要在查词卡片里手动点一下，更省额度", s.autoAi) { v -> vm.update { it.copy(autoAi = v) } }
+            SwitchRow(
+                "AI 标出文章里的难懂短语",
+                "每篇文章第一次打开时请求一次，用虚线标出 catch up with 这类认识单词也未必懂的搭配和术语",
+                s.aiPhrases,
+            ) { v -> vm.update { it.copy(aiPhrases = v) } }
 
             SwitchRow(
                 "每天自动生成复习短文",

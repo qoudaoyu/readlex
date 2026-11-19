@@ -15,6 +15,8 @@ data class AppSettings(
     val baseUrl: String = "",
     /** Fetch the AI contextual meaning automatically when a word is tapped. */
     val autoAi: Boolean = false,
+    /** Ask AI once per article for its hard phrases and terms. */
+    val aiPhrases: Boolean = true,
     val highlightMode: HighlightMode = HighlightMode.ALL,
     /** Estimated vocabulary size from the test; 0 = not tested yet. */
     val vocabSize: Int = 0,
@@ -74,6 +76,7 @@ class SettingsStore(context: Context) {
             model = prefs.getString("model", AiConfig.defaultModel(type))!!,
             baseUrl = prefs.getString("baseUrl", "")!!,
             autoAi = prefs.getBoolean("autoAi", d.autoAi),
+            aiPhrases = prefs.getBoolean("aiPhrases", d.aiPhrases),
             highlightMode = runCatching { HighlightMode.valueOf(prefs.getString("highlightMode", d.highlightMode.name)!!) }.getOrDefault(d.highlightMode),
             vocabSize = prefs.getInt("vocabSize", 0),
             knownBoundary = prefs.getInt("knownBoundary", d.knownBoundary),
@@ -101,6 +104,7 @@ class SettingsStore(context: Context) {
             .putString("model", s.model)
             .putString("baseUrl", s.baseUrl)
             .putBoolean("autoAi", s.autoAi)
+            .putBoolean("aiPhrases", s.aiPhrases)
             .putString("highlightMode", s.highlightMode.name)
             .putInt("vocabSize", s.vocabSize)
             .putInt("knownBoundary", s.knownBoundary)

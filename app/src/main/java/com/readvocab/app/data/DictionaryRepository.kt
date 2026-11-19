@@ -3,6 +3,7 @@ package com.readvocab.app.data
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.readvocab.core.text.Lemmatizer
+import com.readvocab.core.text.PhraseEntry
 import com.readvocab.core.vocab.WordFamily
 import com.readvocab.core.vocab.Band
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +45,7 @@ class DictionaryRepository(private val context: Context) {
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready
 
-    val lemmatizer = Lemmatizer({ lemmas[it] }, { ranks.containsKey(it) })
+    val lemmatizer = Lemmatizer({ lemmas[it] }, { ranks.containsKey(it) }, { ranks[it] })
 
     suspend fun ensureLoaded() = mutex.withLock {
         if (_ready.value) return@withLock
@@ -54,7 +55,8 @@ class DictionaryRepository(private val context: Context) {
             if (!file.exists() || prefs.getInt("version", 0) != DB_VERSION) {
                 file.parentFile?.mkdirs()
                 val tmp = File(file.parentFile, "$DB_NAME.tmp")
-                context.assets.open(DB_NAME).use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                // Shipped gzipped (as .gzip: the Android build unpacks .gz assets) because the phrase table makes it big.
+                java.util.zip.GZIPInputStream(context.assets.open("$DB_NAME.gzip")).use { input -> tmp.outputStream().use { input.copyTo(it) } }
                 tmp.renameTo(file)
                 prefs.edit().putInt("version", DB_VERSION).apply()
             }
@@ -86,14 +88,35 @@ class DictionaryRepository(private val context: Context) {
 
     fun lemma(surface: String): String = lemmatizer.lemma(surface)
 
+    /** A word's entry; for a phrase on the word list (it contains a space), the phrase's entry. */
     suspend fun lookup(word: String): DictEntry? = withContext(Dispatchers.IO) {
         ensureLoaded()
+        if (' ' in word) return@withContext lookupPhrase(word)
         db!!.rawQuery("SELECT word, phonetic, translation, tag, rank, exchange FROM dict WHERE word = ?", arrayOf(word)).use { c ->
             if (!c.moveToFirst()) null
             else DictEntry(
                 word = c.getString(0), phonetic = c.getString(1), translation = c.getString(2),
                 tags = c.getString(3).split(' ').filter { it.isNotBlank() }, rank = c.getInt(4), exchange = c.getString(5),
             )
+        }
+    }
+
+    private val phraseCache = java.util.concurrent.ConcurrentHashMap<String, List<PhraseEntry>>()
+
+    /** Phrases whose first word has lemma [first] (catch → catch up, catch up with, …). Call off the main thread. */
+    fun phrasesStartingWith(first: String): List<PhraseEntry> = phraseCache.getOrPut(first) {
+        val d = db ?: return@getOrPut emptyList()
+        d.rawQuery("SELECT phrase, key, kind FROM phrase WHERE key >= ? AND key < ?", arrayOf("$first ", "$first!")).use { c ->
+            buildList { while (c.moveToNext()) add(PhraseEntry(c.getString(0), c.getString(1).split(' '), c.getInt(2))) }
+        }
+    }
+
+    /** A phrase's dictionary entry, shaped like a word's (no phonetic, no rank). */
+    suspend fun lookupPhrase(phrase: String): DictEntry? = withContext(Dispatchers.IO) {
+        ensureLoaded()
+        db!!.rawQuery("SELECT phrase, translation FROM phrase WHERE phrase = ?", arrayOf(phrase)).use { c ->
+            if (!c.moveToFirst()) null
+            else DictEntry(word = c.getString(0), phonetic = "", translation = c.getString(1), tags = emptyList(), rank = 0, exchange = "")
         }
     }
 
@@ -112,6 +135,6 @@ class DictionaryRepository(private val context: Context) {
 
     companion object {
         private const val DB_NAME = "ecdict.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 3
     }
 }
