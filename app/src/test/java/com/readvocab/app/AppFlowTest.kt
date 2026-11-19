@@ -230,6 +230,9 @@ class AppFlowTest {
         // An imported article in the reader: source line, headline, subheading, list.
         val articleId = runBlocking {
             val raw = javaClass.classLoader!!.getResource("bbc-like.extracted.json")!!.readText()
+            // Shaded words in the opening paragraph, whose first line is taller (raised initial).
+            container.words.setStatus("shopkeeper", WordStatus.LEARNING)
+            container.words.setStatus("cellar", WordStatus.FAMILIAR)
             container.articles.save(container.articles.parseResult(raw))
         }
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }

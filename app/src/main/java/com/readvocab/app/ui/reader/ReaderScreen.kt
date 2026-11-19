@@ -88,6 +88,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.readvocab.app.data.BookEntity
@@ -403,25 +404,31 @@ private fun ParagraphText(
     val selectionColor = colors.accent.copy(alpha = 0.18f)
     // Uppercase a subheading only when that keeps every offset where the tokens expect it.
     val shown = if (para.kind == ParaMarkup.Kind.HEADING) para.text.uppercase().takeIf { it.length == para.text.length } ?: para.text else para.text
-    val annotated = remember(para, shown, highlightFor, colors, selected, lede, fontSizeSp) {
+    // Word and selection shading is drawn from the text layout rather than as background spans:
+    // Android places span backgrounds wrongly in a paragraph whose lines differ in height (the
+    // raised initial makes the first line taller), so the shading slid off its words.
+    val shading = remember(para, highlightFor, colors) {
+        buildList {
+            for (t in para.tokens) when (highlightFor(t.lemma)) {
+                Highlight.LEARNING -> add(t.start until t.end to HighlightColors.learning(dark))
+                Highlight.FAMILIAR -> add(t.start until t.end to HighlightColors.familiar(dark))
+                else -> Unit
+            }
+        }
+    }
+    val annotated = remember(para, shown, highlightFor, colors, lede, fontSizeSp) {
         buildAnnotatedString {
             append(shown)
             // The opening paragraph of an article starts with a raised initial in the accent colour.
             if (lede && shown.isNotEmpty() && shown[0].isLetter()) {
                 addStyle(SpanStyle(fontSize = (fontSizeSp * 2.4f).sp, fontWeight = FontWeight.Bold, color = colors.accent), 0, 1)
             }
-            for (r in selected) addStyle(SpanStyle(background = selectionColor), r.first, r.last + 1)
             for (t in para.tokens) {
-                val h = highlightFor(t.lemma)
                 // A name is only marked if the reader put it on the word list themselves.
-                if (t.name && h == Highlight.NEW) continue
-                val style = when (h) {
-                    Highlight.NONE -> null
-                    Highlight.NEW -> SpanStyle(color = HighlightColors.newWord(dark), textDecoration = TextDecoration.Underline)
-                    Highlight.LEARNING -> SpanStyle(background = HighlightColors.learning(dark))
-                    Highlight.FAMILIAR -> SpanStyle(background = HighlightColors.familiar(dark))
+                if (t.name) continue
+                if (highlightFor(t.lemma) == Highlight.NEW) {
+                    addStyle(SpanStyle(color = HighlightColors.newWord(dark), textDecoration = TextDecoration.Underline), t.start, t.end)
                 }
-                if (style != null) addStyle(style, t.start, t.end)
             }
         }
     }
@@ -450,6 +457,30 @@ private fun ParagraphText(
         onTextLayout = { layout = it; onLayout(it) },
         modifier = Modifier.fillMaxWidth()
             .then(decoration)
+            .drawBehind {
+                val l = layout ?: return@drawBehind
+                val n = l.layoutInput.text.length
+                // Selected sentences: whole line boxes, so lines join into one block.
+                for (r in selected) if (!r.isEmpty() && r.last < n) drawPath(l.getPathForRange(r.first, r.last + 1), selectionColor)
+                // Words: a box around the letters only, measured from the baseline of their line.
+                val em = style.fontSize.toPx()
+                val radius = CornerRadius(2.dp.toPx())
+                for ((range, color) in shading) {
+                    if (range.isEmpty() || range.last >= n) continue
+                    val line = l.getLineForOffset(range.first)
+                    if (l.getLineForOffset(range.last) != line) {
+                        drawPath(l.getPathForRange(range.first, range.last + 1), color)
+                        continue
+                    }
+                    val left = l.getHorizontalPosition(range.first, usePrimaryDirection = true)
+                    val right = l.getHorizontalPosition(range.last + 1, usePrimaryDirection = true).let {
+                        // At a line end the next offset may sit on the following line.
+                        if (it <= left) l.getBoundingBox(range.last).right else it
+                    }
+                    val base = l.getLineBaseline(line)
+                    drawRoundRect(color, topLeft = Offset(left - 1.dp.toPx(), base - em * 0.95f), size = Size(right - left + 2.dp.toPx(), em * 1.25f), cornerRadius = radius)
+                }
+            }
             .pointerInput(para) {
                 detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
             },
