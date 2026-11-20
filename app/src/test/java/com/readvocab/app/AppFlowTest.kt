@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.test.core.app.ApplicationProvider
+import com.readvocab.app.ui.reader.ReaderViewModel
 import com.readvocab.app.data.PassedWord
 import com.readvocab.app.ui.MainActivity
 import com.readvocab.core.srs.Rating
@@ -249,7 +250,7 @@ class AppFlowTest {
             container.words.setStatus("cellar", WordStatus.FAMILIAR)
             container.articles.save(container.articles.parseResult(raw)).also { id ->
                 // What AI picked from this article (no network in tests): dotted in the text.
-                container.books.cacheFile(id, "phrases-ai.json").writeText("""[{"text":"give up","phrase":"give up","meaning":"让出（土地）"}]""")
+                container.books.cacheFile(id, ReaderViewModel.AI_PHRASES_FILE).writeText("""[{"text":"give up","phrase":"give up","meaning":"让出（土地）"}]""")
             }
         }
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }

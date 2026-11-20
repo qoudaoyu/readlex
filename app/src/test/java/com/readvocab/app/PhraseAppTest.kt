@@ -41,7 +41,7 @@ class PhraseAppTest {
             c.books.importText("Markets rally", text, "Example News", BookEntity.KIND_ARTICLE, "https://example.com/markets")
         }
         // The AI's picks for this article, as the reader caches them after asking once.
-        c.books.cacheFile(id, "phrases-ai.json").writeText("""[{"text":"step up","phrase":"step up","meaning":"加大，加强"}]""")
+        c.books.cacheFile(id, ReaderViewModel.AI_PHRASES_FILE).writeText("""[{"text":"step up","phrase":"step up","meaning":"加大，加强"}]""")
         val vm = ReaderViewModel(c, id)
         waitFor("chapter") { !vm.state.value.loading && vm.state.value.paragraphs.isNotEmpty() }
         val paras = vm.state.value.paragraphs

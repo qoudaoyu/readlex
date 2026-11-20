@@ -247,7 +247,7 @@ fun ReaderScreen(bookId: Long, onBack: () -> Unit) {
             val inText = y - item.offset - dy
             // Below the text (the standfirst and meta bar under a headline) is not a word.
             if (inText < 0 || inText > layout.size.height) return null
-            return paraIndex to layout.getOffsetForPosition(Offset(pos.x - horizontalPadPx, inText))
+            return paraIndex to tapOffset(layout, Offset(pos.x - horizontalPadPx, inText))
         }
         LazyColumn(
             state = listState,
@@ -519,10 +519,34 @@ private fun ParagraphText(
                 }
             }
             .pointerInput(para) {
-                detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(it.getOffsetForPosition(pos)) } })
+                detectTapGestures(onTap = { pos -> layout?.let { currentOnTap(tapOffset(it, pos)) } })
             },
     )
 }
+
+/**
+ * The character a tap at [pos] means. Android's line boxes do not match what the eye sees: with
+ * loose line spacing a line's box ends less than half an em under its letters, and a fingertip
+ * covering a word reports a point a little below the word, so a tap just under a word opened the
+ * word on the next line. Pick the line whose letters (their middle sits about 0.35 em above the
+ * baseline) are nearest to the tap, after lifting the tap by [FINGER_BIAS] em, then the place on it.
+ */
+internal fun tapOffset(l: TextLayoutResult, pos: Offset): Int {
+    if (l.lineCount == 0) return 0
+    val input = l.layoutInput
+    val em = with(input.density) { input.style.fontSize.toPx() }
+    val line = nearestLine(List(l.lineCount) { l.getLineBaseline(it) - em * 0.35f }, pos.y - em * FINGER_BIAS)
+    val y = l.getLineBaseline(line) - em * 0.35f
+    val x = pos.x.coerceIn(l.getLineLeft(line), maxOf(l.getLineLeft(line), l.getLineRight(line) - 1f))
+    return l.getOffsetForPosition(Offset(x, y))
+}
+
+/** How far (in em) a fingertip's reported point sits below what it covers. */
+private const val FINGER_BIAS = 0.2f
+
+/** Index of the line whose letter middle (in [centers]) is closest to [y]. */
+internal fun nearestLine(centers: List<Float>, y: Float): Int =
+    centers.indices.minByOrNull { kotlin.math.abs(centers[it] - y) } ?: 0
 
 /** Where [range] sits on each line it covers: (left, right, baseline). */
 private fun lineRuns(l: TextLayoutResult, range: IntRange): List<Triple<Float, Float, Float>> {

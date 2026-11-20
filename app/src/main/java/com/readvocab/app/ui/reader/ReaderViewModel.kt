@@ -16,6 +16,7 @@ import com.readvocab.core.ai.SentenceExplanation
 import com.readvocab.core.text.ParaMarkup
 import com.readvocab.core.text.ProperNouns
 import com.readvocab.core.text.PhraseEntry
+import com.readvocab.core.text.PhraseFilter
 import com.readvocab.core.text.PhraseMatcher
 import com.readvocab.core.ai.ArticlePhrase
 import com.readvocab.core.vocab.Calibration
@@ -297,7 +298,7 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         val file = c.books.cacheFile(bookId, AI_PHRASES_FILE)
         val list = if (file.exists()) runCatching {
             val arr = org.json.JSONArray(file.readText())
-            (0 until arr.length()).map { arr.getJSONObject(it).let { o -> ArticlePhrase(o.optString("text"), o.optString("phrase"), o.optString("meaning")) } }
+            (0 until arr.length()).map { arr.getJSONObject(it).let { o -> ArticlePhrase(o.optString("text"), o.optString("phrase"), o.optString("meaning"), o.optString("type")) } }
         }.getOrNull() else null
         aiPhraseList = list
         return list.orEmpty()
@@ -315,7 +316,9 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
                 val end = at + needle.length
                 val first = tokens.indexOfFirst { it.start == at }
                 val last = tokens.indexOfLast { it.end == end }
-                if (first >= 0 && last >= first && fromAi.none { at < it.end && end > it.start }) {
+                // A name is never a phrase to explain, whatever the AI says (The National Lottery Heritage Fund).
+                val named = first >= 0 && last >= first && (first..last).any { tokens[it].name }
+                if (first >= 0 && last >= first && !named && fromAi.none { at < it.end && end > it.start }) {
                     fromAi += PhraseSpan(at, end, a.phrase.ifBlank { needle }.lowercase(), PhraseSpan.AI, first, last, a.meaning)
                 }
                 at = lower.indexOf(needle, at + 1)
@@ -338,14 +341,19 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
         viewModelScope.launch {
             val list = try {
                 val text = withContext(Dispatchers.IO) { c.books.fullText(bookId) }
-                withContext(Dispatchers.IO) { tutor.articlePhrases(text, c.settings.current.vocabSize.takeIf { it > 0 } ?: c.settings.current.knownBoundary) }
+                withContext(Dispatchers.IO) {
+                    val picked = tutor.articlePhrases(text, c.settings.current.vocabSize.takeIf { it > 0 } ?: c.settings.current.knownBoundary)
+                    val listed = picked.flatMap { listOf(it.phrase, it.text) }.map { it.trim().lowercase() }
+                        .filter { ' ' in it }.toSet().filter { c.dictionary.lookupPhrase(it) != null }.toSet()
+                    PhraseFilter.filter(picked) { it in listed }
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 return@launch // try again next time the text is opened
             }
             withContext(Dispatchers.IO) {
                 val arr = org.json.JSONArray()
-                list.forEach { arr.put(org.json.JSONObject().put("text", it.text).put("phrase", it.phrase).put("meaning", it.meaning)) }
+                list.forEach { arr.put(org.json.JSONObject().put("text", it.text).put("phrase", it.phrase).put("meaning", it.meaning).put("type", it.type)) }
                 runCatching { c.books.cacheFile(bookId, AI_PHRASES_FILE).writeText(arr.toString()) }
             }
             aiPhraseList = list
@@ -557,7 +565,8 @@ class ReaderViewModel(private val c: AppContainer, private val bookId: Long) : V
     companion object {
         /** In a review story, a target word read 12+ hours after its last review counts even if not due. */
         private const val FELT_FILE = "felt.txt"
-        private const val AI_PHRASES_FILE = "phrases-ai.json"
+        /** v2: picked with the stricter prompt and [PhraseFilter]; v1 files held too many plain word pairs. */
+        const val AI_PHRASES_FILE = "phrases-ai-v2.json"
         private const val STORY_EARLY_REVIEW_MS = 12 * 60 * 60 * 1000L
         /** Longest pause between interactions that still counts as reading (a long paragraph). */
         private const val MAX_IDLE_GAP_MS = 2 * 60 * 1000L
