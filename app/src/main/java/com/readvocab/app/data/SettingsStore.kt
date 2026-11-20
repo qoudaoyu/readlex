@@ -1,5 +1,6 @@
 package com.readvocab.app.data
 
+import com.readvocab.core.vocab.KnownCurve
 import android.content.Context
 import com.readvocab.core.ai.AiConfig
 import com.readvocab.core.ai.ProviderType
@@ -14,6 +15,8 @@ data class AppSettings(
     val baseUrl: String = "",
     /** Fetch the AI contextual meaning automatically when a word is tapped. */
     val autoAi: Boolean = false,
+    /** Ask AI once per article for its hard phrases and terms. */
+    val aiPhrases: Boolean = true,
     val highlightMode: HighlightMode = HighlightMode.ALL,
     /** Estimated vocabulary size from the test; 0 = not tested yet. */
     val vocabSize: Int = 0,
@@ -30,8 +33,22 @@ data class AppSettings(
     /** Daily reminder to review/read, at [reminderMinuteOfDay] local time. */
     val reminderEnabled: Boolean = false,
     val reminderMinuteOfDay: Int = 20 * 60,
+    val lastNewsRefresh: Long = 0,
+    /** Reader page colors: "SYSTEM" follows the phone, or "LIGHT" / "DARK". */
+    val readerTheme: String = "SYSTEM",
+    /** Which set of built-in news feeds has been offered; later sets are added once to existing lists. */
+    val feedDefaults: Int = 0,
+    /** From the vocabulary test: how likely each frequency rank is known (see KnownCurve); empty before a test. */
+    val knownCurve: String = "",
+    /** Calibration from "harder / easier than estimated" answers after reading; 0 = none. */
+    val difficultyShift: Float = 0f,
+    val calibrationCount: Int = 0,
 ) {
     val aiConfig: AiConfig get() = AiConfig(aiType, apiKey, model, baseUrl)
+
+    /** How likely the reader knows a word they have no record of, by frequency rank. */
+    val curve: KnownCurve get() =
+        KnownCurve.decode(knownCurve, difficultyShift.toDouble()) ?: KnownCurve.fromBoundary(knownBoundary, difficultyShift.toDouble())
 
     companion object {
         /** Before the test, assume a typical learner who passed CET-4. */
@@ -59,6 +76,7 @@ class SettingsStore(context: Context) {
             model = prefs.getString("model", AiConfig.defaultModel(type))!!,
             baseUrl = prefs.getString("baseUrl", "")!!,
             autoAi = prefs.getBoolean("autoAi", d.autoAi),
+            aiPhrases = prefs.getBoolean("aiPhrases", d.aiPhrases),
             highlightMode = runCatching { HighlightMode.valueOf(prefs.getString("highlightMode", d.highlightMode.name)!!) }.getOrDefault(d.highlightMode),
             vocabSize = prefs.getInt("vocabSize", 0),
             knownBoundary = prefs.getInt("knownBoundary", d.knownBoundary),
@@ -69,6 +87,12 @@ class SettingsStore(context: Context) {
             lastAutoStoryDay = prefs.getLong("lastAutoStoryDay", 0),
             reminderEnabled = prefs.getBoolean("reminderEnabled", d.reminderEnabled),
             reminderMinuteOfDay = prefs.getInt("reminderMinuteOfDay", d.reminderMinuteOfDay),
+            lastNewsRefresh = prefs.getLong("lastNewsRefresh", 0),
+            readerTheme = prefs.getString("readerTheme", d.readerTheme)!!,
+            feedDefaults = prefs.getInt("feedDefaults", 0),
+            knownCurve = prefs.getString("knownCurve", "")!!,
+            difficultyShift = prefs.getFloat("difficultyShift", 0f),
+            calibrationCount = prefs.getInt("calibrationCount", 0),
         )
     }
 
@@ -80,6 +104,7 @@ class SettingsStore(context: Context) {
             .putString("model", s.model)
             .putString("baseUrl", s.baseUrl)
             .putBoolean("autoAi", s.autoAi)
+            .putBoolean("aiPhrases", s.aiPhrases)
             .putString("highlightMode", s.highlightMode.name)
             .putInt("vocabSize", s.vocabSize)
             .putInt("knownBoundary", s.knownBoundary)
@@ -90,6 +115,12 @@ class SettingsStore(context: Context) {
             .putLong("lastAutoStoryDay", s.lastAutoStoryDay)
             .putBoolean("reminderEnabled", s.reminderEnabled)
             .putInt("reminderMinuteOfDay", s.reminderMinuteOfDay)
+            .putLong("lastNewsRefresh", s.lastNewsRefresh)
+            .putString("readerTheme", s.readerTheme)
+            .putInt("feedDefaults", s.feedDefaults)
+            .putString("knownCurve", s.knownCurve)
+            .putFloat("difficultyShift", s.difficultyShift)
+            .putInt("calibrationCount", s.calibrationCount)
             .apply()
         _settings.value = s
     }

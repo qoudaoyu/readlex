@@ -35,6 +35,7 @@ import androidx.lifecycle.viewModelScope
 import com.readvocab.app.AppContainer
 import com.readvocab.app.ui.appViewModel
 import com.readvocab.core.vocab.TestItem
+import com.readvocab.core.vocab.KnownCurve
 import com.readvocab.core.vocab.VocabEstimator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,7 +52,7 @@ data class VocabTestState(
     val pages: Int get() = (items.size + PAGE - 1) / PAGE
     val pageItems: List<TestItem> get() = items.drop(page * PAGE).take(PAGE)
 
-    companion object { const val PAGE = 18 }
+    companion object { const val PAGE = 20 }
 }
 
 class VocabTestViewModel(private val c: AppContainer) : ViewModel() {
@@ -63,8 +64,15 @@ class VocabTestViewModel(private val c: AppContainer) : ViewModel() {
             val items = VocabEstimator.BANDS.flatMapIndexed { i, band ->
                 c.dictionary.sample(band, VocabEstimator.WORDS_PER_BAND).map { TestItem(it, i) }
             }
-            // Shuffle within pages of nearby bands so difficulty still rises page by page.
-            _state.value = VocabTestState(loading = false, items = items.chunked(VocabTestState.PAGE).flatMap { it.shuffled() })
+            // Shuffle within pages of nearby bands so difficulty still rises page by page; each page
+            // also hides two made-up words, which measure guessing.
+            val pseudo = VocabEstimator.PSEUDOWORDS.shuffled().take(VocabEstimator.PSEUDO_PER_TEST).map { TestItem(it, TestItem.PSEUDO) }
+            val perPage = VocabTestState.PAGE - 2
+            val pages = items.chunked(perPage)
+            _state.value = VocabTestState(
+                loading = false,
+                items = pages.flatMapIndexed { i, page -> (page + pseudo.drop(i * 2).take(2)).shuffled() } + pseudo.drop(pages.size * 2),
+            )
         }
     }
 
@@ -75,7 +83,9 @@ class VocabTestViewModel(private val c: AppContainer) : ViewModel() {
         if (s.page + 1 < s.pages) { _state.update { it.copy(page = it.page + 1) }; return }
         val size = VocabEstimator.estimate(s.items, s.known)
         val boundary = VocabEstimator.knownBoundary(s.items, s.known)
-        c.settings.update { it.copy(vocabSize = size, knownBoundary = boundary) }
+        val curve = KnownCurve.fromTest(VocabEstimator.bandKnown(s.items, s.known), VocabEstimator.falseAlarm(s.items, s.known))
+        // A new test starts the difficulty calibration afresh.
+        c.settings.update { it.copy(vocabSize = size, knownBoundary = boundary, knownCurve = curve.encode(), difficultyShift = 0f, calibrationCount = 0) }
         _state.update { it.copy(result = size) }
     }
 

@@ -12,6 +12,9 @@
 - **阅读中复习**：点过的词自动进入「学习中」（FSRS 调度）。之后在书里再遇到、读过去没点它，就算一次成功复习；读过 3 次都没点的生词自动记为「已认识」，词汇模型随阅读自我修正。
 - **复习卡**：只出现到期了、最近又没在阅读中碰到的词；正面是你当初遇到它的原句挖空。
 - **生词本**：按学习中 / 熟悉 / 掌握 / 已知 / 忽略分类，查看遇到过的所有句子。
+- **新闻**：订阅 BBC、纽约客、NYT 等网站的 RSS，按时间列出最新标题；可以开关或删除订阅源，也能自己添加。
+- **内置浏览器 + 一键导入**：在 App 里打开任意英文网页，点"导入阅读"，用 Mozilla Readability（Firefox 阅读模式的引擎）提取正文放进书架。需要订阅的网站在内置浏览器里登录一次即可。也可以在其他 App 里"分享"链接或一段文字到本 App。
+- **难度匹配度**：每本书、每篇文章都标出"你认识其中百分之几的词"（按你的词汇量和生词表计算）：98% 以上轻松，95–98% 合适，90–95% 有挑战，90% 以下偏难。
 - **今日面板**：书架顶部显示待复习、今天已复习、今天新加的词、今天阅读的词数和时长、连续学习天数。
 - **学习统计**：未来 7 天每天要复习多少词、近 30 天的复习量和阅读量、生词表的记忆状态分布。
 - **每日提醒**：可设时间。有到期的词就提醒复习；没有的话，当天还没读过才提醒。
@@ -28,9 +31,9 @@ core/   纯 Kotlin（JVM）模块，可直接单测
   ai/        AiProvider 抽象 + AnthropicProvider + OpenAiCompatibleProvider + AiTutor（提示词与 JSON 解析）
   importer/  TXT / EPUB / HTML 解析
 app/    Android（Jetpack Compose + Room）
-  data/      Room 实体与 DAO、词典仓库（assets/ecdict.db）、书籍与单词仓库、设置
+  data/      Room 实体与 DAO、词典仓库（assets/ecdict.db.gzip）、书籍与单词仓库、设置
   ui/        书架、阅读器、查词卡、复习、生词本、词汇量测试、设置
-tools/build_dict.py  从 ECDICT 生成 app/src/main/assets/ecdict.db
+tools/build_dict.py  从 ECDICT 生成 app/src/main/assets/ecdict.db.gzip
 ```
 
 新增 AI 能力（例如按词汇量改写文章、生成例句）：在 `core/ai/AiTutor.kt` 加一个方法即可，所有服务商自动可用；新增服务商：实现 `AiProvider` 接口并在 `AiProviders.create` 里注册。
@@ -51,12 +54,20 @@ release 包目前用 debug 签名，方便直接安装；正式发布前请换�
 ```bash
 curl -LO https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv
 curl -LO https://raw.githubusercontent.com/skywind3000/ECDICT/master/lemma.en.txt
-python3 tools/build_dict.py ecdict.csv lemma.en.txt app/src/main/assets/ecdict.db
+python3 tools/build_dict.py ecdict.csv lemma.en.txt app/src/main/assets/ecdict.db  # writes ecdict.db.gzipip
 ```
 
 ## 后续（V2 / V3）
 
 网页链接导入、按生词率推荐内容、导出 Anki / CSV、学习统计、AI 分级改写、云同步。
+
+## 正文提取的测试
+
+`app/src/main/assets/readability/` 里是 Readability.js（Apache 2.0）和包装脚本 `extract.js`。`tools/extract-test.js` 用 Playwright 在真实 Chromium 里对 `app/src/test/resources/*.html` 运行同一个脚本，生成 `*.extracted.json`，单元测试再用这些输出验证导入逻辑：
+
+```
+node tools/extract-test.js .
+```
 
 ## 许可
 

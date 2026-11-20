@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Builds app/src/main/assets/ecdict.db from ECDICT (https://github.com/skywind3000/ECDICT, MIT).
+"""Builds app/src/main/assets/ecdict.db.gzip from ECDICT (https://github.com/skywind3000/ECDICT, MIT).
 
 Usage:
     curl -LO https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv
     curl -LO https://raw.githubusercontent.com/skywind3000/ECDICT/master/lemma.en.txt
-    python3 tools/build_dict.py ecdict.csv lemma.en.txt app/src/main/assets/ecdict.db
+    python3 tools/build_dict.py ecdict.csv lemma.en.txt app/src/main/assets/ecdict.db  # writes ecdict.db.gzip
 
 Keeps lowercase English headwords that have frequency data, exam tags or Collins/Oxford marks
-(~50k words), plus a form -> lemma table for inflections.
+(~50k words), plus a form -> lemma table for inflections, plus multi-word phrases (catch up with,
+market capitalization) made of known words: general phrases, and terms from economics and law.
+Medical, computing, chemistry and engineering jargon is left out to keep the app small.
 """
 import csv
 import os
@@ -16,6 +18,12 @@ import sqlite3
 import sys
 
 WORD_RE = re.compile(r"^[a-z][a-z'\-]*$")
+PHRASE_WORD_RE = re.compile(r"^[a-z]+(?:'[a-z]+)?$")
+TERM_DOMAINS = {"经", "法"}
+# Placeholders in phrases, matched against the reader's text by the app.
+SLOTS = {"one's": "#poss", "oneself": "#refl", "sb": "#sb", "somebody": "#sb", "sth": "#sth", "something": "#sth"}
+PHRASE_KIND_GENERAL = 1
+PHRASE_KIND_TERM = 2
 SKIP_LEMMAS = {"it", "he", "she", "we", "they", "i", "you"}
 # ECDICT's exchange data maps a few very common forms to the wrong lemma (does -> doe).
 OVERRIDES = {
@@ -30,9 +38,13 @@ def main(csv_path, lemma_path, out_path):
     csv.field_size_limit(10 ** 9)
     rows = {}
     exchange_lemma = {}
+    phrase_rows = []
     with open(csv_path, encoding="utf-8") as f:
         for r in csv.DictReader(f):
             w = r["word"]
+            if " " in w:
+                phrase_rows.append((w, r["translation"]))
+                continue
             if not WORD_RE.match(w):
                 continue
             frq = int(r["frq"] or 0)
@@ -82,6 +94,8 @@ def main(csv_path, lemma_path, out_path):
         if lemma in rows:
             lemmas[form] = lemma
 
+    phrases = build_phrases(phrase_rows, rows, lemmas)
+
     if os.path.exists(out_path):
         os.remove(out_path)
     db = sqlite3.connect(out_path)
@@ -101,15 +115,69 @@ def main(csv_path, lemma_path, out_path):
         CREATE TABLE lemma (form TEXT PRIMARY KEY NOT NULL, lemma TEXT NOT NULL) WITHOUT ROWID;
         CREATE INDEX dict_rank ON dict(rank);
         CREATE TABLE meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+        CREATE TABLE phrase (
+            phrase TEXT PRIMARY KEY NOT NULL,
+            key TEXT NOT NULL,
+            kind INTEGER NOT NULL,
+            translation TEXT NOT NULL
+        ) WITHOUT ROWID;
         """
     )
+    db.executemany("INSERT INTO phrase VALUES (?,?,?,?)", phrases)
+    db.execute("CREATE INDEX phrase_key ON phrase(key)")
     db.executemany("INSERT INTO dict VALUES (?,?,?,?,?,?,?,?)", rows.values())
     db.executemany("INSERT INTO lemma VALUES (?,?)", lemmas.items())
-    db.execute("INSERT INTO meta VALUES ('version', '1')")
+    db.execute("INSERT INTO meta VALUES ('version', '2')")
     db.commit()
     db.execute("VACUUM")
     db.close()
-    print(f"dict: {len(rows)} words, lemma: {len(lemmas)} forms -> {out_path} ({os.path.getsize(out_path) / 1e6:.1f} MB)")
+    # The app ships the database gzipped (ecdict.db.gzip; a .gz asset would be unpacked by the Android build) and unpacks it on first start.
+    import gzip, shutil
+    with open(out_path, "rb") as src, gzip.open(out_path + ".gzip", "wb", compresslevel=9) as dst:
+        shutil.copyfileobj(src, dst)
+    os.remove(out_path)
+    out_path += ".gzip"
+    print(f"dict: {len(rows)} words, lemma: {len(lemmas)} forms, phrase: {len(phrases)} -> {out_path} ({os.path.getsize(out_path) / 1e6:.1f} MB)")
+
+
+def lemma_of(word, rows, lemmas):
+    """As the app's Lemmatizer: a form much more common than its lemma keeps its own entry (according, not accord)."""
+    lemma = lemmas.get(word)
+    if lemma is None:
+        return word
+    own = rows[word][4] if word in rows else 0
+    base = rows[lemma][4] if lemma in rows else 0
+    return word if own > 0 and base > 0 and own * 2 < base else lemma
+
+
+def build_phrases(phrase_rows, rows, lemmas):
+    """(phrase, key, kind, translation): key is the phrase's words as lemmas, placeholders as #slots."""
+    out = {}
+    for w, raw in phrase_rows:
+        words = w.split(" ")
+        if not 2 <= len(words) <= 5 or words[0] in ("a", "an", "the"):
+            continue
+        if not all(PHRASE_WORD_RE.match(x) for x in words):
+            continue
+        if not all(x in rows or x in lemmas or x in SLOTS for x in words):
+            continue
+        if all(x in SLOTS for x in words[1:]) or words[0] in SLOTS:
+            continue
+        lines = [l.strip() for l in raw.replace("\\r\\n", "\n").replace("\\n", "\n").split("\n") if l.strip()]
+        general = [l for l in lines if not l.startswith("[")]
+        domains = set(re.findall(r"\[([^\]]+)\]", raw))
+        if general:
+            kind = PHRASE_KIND_GENERAL
+            kept = general[:3]
+        elif domains & TERM_DOMAINS:
+            kind = PHRASE_KIND_TERM
+            kept = [l for l in lines if any(l.startswith(f"[{d}]") for d in TERM_DOMAINS)][:2]
+        else:
+            continue
+        translation = "\n".join(kept)[:240]
+        key = " ".join(SLOTS.get(x) or lemma_of(x, rows, lemmas) for x in words)
+        out[w] = (w, key, kind, translation)
+    return list(out.values())
 
 
 if __name__ == "__main__":

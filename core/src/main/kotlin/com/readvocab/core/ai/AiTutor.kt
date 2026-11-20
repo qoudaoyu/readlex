@@ -29,6 +29,22 @@ data class SentenceExplanation(
 /** A word the review story must use, with the meaning the learner met it in. */
 data class StoryWord(val lemma: String, val meaning: String)
 
+/** A multi-word expression in an article whose meaning does not follow from its words. */
+@Serializable
+data class ArticlePhrase(
+    /** Exactly as it appears in the article (caught up with). */
+    val text: String = "",
+    /** Dictionary form (catch up with). */
+    val phrase: String = "",
+    /** Chinese meaning in this article. */
+    val meaning: String = "",
+    /** What kind of expression the AI says this is: phrasal_verb, idiom, fixed or term. */
+    val type: String = "",
+)
+
+@Serializable
+data class ArticlePhrases(val phrases: List<ArticlePhrase> = emptyList())
+
 @Serializable
 data class ReviewStory(val title: String = "", val body: String = "")
 
@@ -88,6 +104,36 @@ class AiTutor(private val provider: AiProvider) {
         return story
     }
 
+    /**
+     * Picks the phrasal verbs, idioms, fixed expressions and terms in an article that a learner
+     * who knows each word may still not understand, with their meaning in this article.
+     */
+    fun articlePhrases(article: String, vocabSize: Int): List<ArticlePhrase> {
+        val user = buildString {
+            appendLine("读者是中文母语的英语学习者，词汇量约 ${vocabSize} 词。下面是一篇英文文章。")
+            appendLine("请找出文中真正的“固定表达”：读者即使认识每个单词，按字面直译也会理解错或理解不了的多词组合。只收这四类：")
+            appendLine("- phrasal_verb：短语动词或动词/形容词与介词的固定搭配，如 catch up with、engage with、keen on、carry out")
+            appendLine("- idiom：习语，整体意思不是字面意思，如 on their doorstep（近在身边）、stepping stone（垫脚石）、at stake")
+            appendLine("- fixed：固定的介词短语或连接表达，如 in general、by and large、as a result of")
+            appendLine("- term：专业术语，如 market capitalization、quantitative easing")
+            appendLine("一律不要列：")
+            appendLine("- 动词加宾语的普通组合（creating opportunities、getting people involved、raise money）")
+            appendLine("- 分词或时态结构（having already run、has been building）")
+            appendLine("- 形容词或名词修饰名词、意思一看就懂的组合（thriving habitats、local residents、wildlife corridors）")
+            appendLine("- 人名、地名、机构名、项目名（The National Lottery Heritage Fund）")
+            appendLine("- 意思能从单词直接推出的组合（agree with、very good、the government）")
+            appendLine("判断标准：把每个词按最常见的意思直译成中文，如果读者能正确理解，就不要列。拿不准就不列，宁缺毋滥。")
+            appendLine("text 只取固定的那部分，不要带上前后的普通词（写 stepping stones，不写 act as stepping stones）。最多 12 个，按在文中出现的顺序。")
+            appendLine()
+            appendLine("文章：")
+            appendLine(article.take(12_000))
+            appendLine()
+            appendLine("""请只输出一个 JSON 对象：{"phrases": [{"text": "与原文完全一致的片段（保留原文的时态和单复数）", "phrase": "词典形式", "type": "phrasal_verb、idiom、fixed 或 term", "meaning": "在本文中的中文意思，12 字以内"}]}""")
+        }
+        return parse<ArticlePhrases>(provider.complete(SYSTEM_PHRASES, user, 6000)).phrases
+            .filter { it.text.trim().contains(' ') && it.meaning.isNotBlank() }
+    }
+
     /** Quick round trip used by the settings screen. */
     fun ping(): String = provider.complete("You are a test endpoint.", "Reply with the single word: OK", 2000).trim()
 
@@ -107,6 +153,9 @@ class AiTutor(private val provider: AiProvider) {
         private const val SYSTEM_SENTENCE =
             "你是面向中文母语者的英语阅读老师。帮助学习者理解难句：给出自然的中文翻译，并讲清楚句子结构。" +
                 "只输出 JSON，不要输出其他文字。"
+
+        private const val SYSTEM_PHRASES =
+            "你是帮助中国学生读英文报刊的老师，擅长发现学生容易误解的固定短语和术语，挑选标准严格，宁缺毋滥。只输出 JSON，不要输出其他文字。"
 
         private const val SYSTEM_STORY =
             "你是为英语学习者写分级读物的作者。你写的文章自然、有趣，难度严格控制在读者水平，" +

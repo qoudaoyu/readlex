@@ -2,7 +2,10 @@ package com.readvocab.app
 
 import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
@@ -11,6 +14,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.test.core.app.ApplicationProvider
+import com.readvocab.app.ui.reader.ReaderViewModel
 import com.readvocab.app.data.PassedWord
 import com.readvocab.app.ui.MainActivity
 import com.readvocab.core.srs.Rating
@@ -200,5 +204,82 @@ class AppFlowTest {
         compose.onNode(hasText("从备份恢复")).performScrollTo()
         compose.waitForIdle()
         shot("5b-settings-backup")
+
+        // News tab with cached headlines (no network in tests), then the in-app browser.
+        runBlocking {
+            container.news.ensureDefaults()
+            val now = System.currentTimeMillis()
+            container.settings.update { it.copy(lastNewsRefresh = now) }
+            val feed = com.readvocab.app.data.NewsRepository.DEFAULT_FEEDS
+            container.database.feeds().upsertItems(listOf(
+                com.readvocab.app.data.FeedItemEntity("https://example.com/a", feed[0].url, "Cities turn to rooftop farms as summers grow hotter", "Officials say plants on roofs cool the rooms below.", now - 25 * 60_000, now),
+                com.readvocab.app.data.FeedItemEntity("https://example.com/b", feed[3].url, "The quiet comeback of the public library", "Why more people are borrowing books again.", now - 3 * 3600_000, now),
+                com.readvocab.app.data.FeedItemEntity("https://example.com/c", feed[4].url, "Ports reopen after the storm", "Ships return to harbour along the coast.", now - 26 * 3600_000, now),
+            ))
+            // Difficulty checks as the background reader would leave them (no network in tests).
+            container.dictionary.ensureLoaded()
+            val articleText = org.json.JSONObject(org.json.JSONTokener(javaClass.classLoader!!.getResource("article-page.extracted.json")!!.readText()).nextValue() as String)
+                .getJSONArray("blocks").let { a -> (0 until a.length()).joinToString("\n\n") { a.getJSONObject(it).getString("text") } }
+            val counts = com.readvocab.core.vocab.Coverage.lemmaCounts(articleText) { container.dictionary.lemma(it) }
+                .filterKeys { container.dictionary.rank(it) != null }.mapValues { it.value * 4 }
+            val checks = container.database.checks()
+            checks.upsert(com.readvocab.app.data.ArticleCheckEntity("https://example.com/a", "OK", 950, counts.entries.joinToString(",") { "${it.key}:${it.value}" }, now))
+            checks.upsert(com.readvocab.app.data.ArticleCheckEntity("https://example.com/b", "SHORT", 0, "", now))
+            checks.upsert(com.readvocab.app.data.ArticleCheckEntity("https://example.com/c", "OK", 640, counts.entries.joinToString(",") { "${it.key}:${it.value * 2 / 3}" }, now))
+        }
+        compose.onNode(hasText("新闻")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("rooftop farms", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        shot("8-news")
+        compose.onAllNodes(hasText("为你推荐")).fetchSemanticsNodes().let { assertTrue("recommendations shown", it.isNotEmpty()) }
+        compose.onNode(hasText("只读到摘要", substring = true)).assertExists()
+        compose.onAllNodes(hasText("Ports reopen after the storm"))[0].performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("import-article")).fetchSemanticsNodes().isNotEmpty() }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        compose.onNode(hasContentDescription("浏览器")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("The New Yorker")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        shot("9-browser-start")
+
+        // An imported article in the reader: source line, headline, subheading, list.
+        val articleId = runBlocking {
+            val raw = javaClass.classLoader!!.getResource("bbc-like.extracted.json")!!.readText()
+            // Shaded words in the opening paragraph, whose first line is taller (raised initial).
+            container.words.setStatus("shopkeeper", WordStatus.LEARNING)
+            container.words.setStatus("cellar", WordStatus.FAMILIAR)
+            container.articles.save(container.articles.parseResult(raw)).also { id ->
+                // What AI picked from this article (no network in tests): dotted in the text.
+                container.books.cacheFile(id, ReaderViewModel.AI_PHRASES_FILE).writeText("""[{"text":"give up","phrase":"give up","meaning":"让出（土地）"}]""")
+            }
+        }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        compose.onNode(hasText("书架")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Why river towns", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodes(hasText("Why river towns", substring = true))[0].performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("Instead of higher walls", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        compose.onNode(hasText("17 Nov 2026", substring = true)).assertExists()
+        shot("10-article")
+
+        // At the end of the article: how did it feel?
+        compose.onNode(hasTestTag("reader-list")).performScrollToNode(hasTestTag("felt-HARDER"))
+        compose.waitForIdle()
+        shot("10b-felt")
+        compose.onNode(hasTestTag("felt-HARDER")).performClick()
+        compose.waitUntil(5_000) { container.settings.current.calibrationCount == 1 }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("felt-HARDER")).fetchSemanticsNodes().isEmpty() }
+        compose.onNode(hasTestTag("reader-list")).performScrollToIndex(0)
+        compose.waitForIdle()
+
+        // Night mode from the "Aa" sheet, kept in settings.
+        compose.onNode(hasContentDescription("字号和夜间模式")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("夜间")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasText("夜间")).performClick()
+        compose.waitForIdle()
+        assertEquals("DARK", container.settings.settings.value.readerTheme)
+        shot("11-article-night") // the sheet is its own window, so the shot shows the page under it
+        assertTrue(articleId > 0)
     }
 }

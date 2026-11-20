@@ -41,10 +41,25 @@ class BookRepository(private val context: Context, private val db: AppDatabase) 
         save(BookImporter.parse(bytes, name, resolver.getType(uri)))
     }
 
-    suspend fun importText(title: String, text: String, author: String = "", kind: String = BookEntity.KIND_BOOK): Long = withContext(Dispatchers.IO) {
+    suspend fun importText(
+        title: String, text: String, author: String = "", kind: String = BookEntity.KIND_BOOK, sourceUrl: String = "",
+        excerpt: String = "", publishedAt: Long = 0,
+    ): Long = withContext(Dispatchers.IO) {
         if (text.isBlank()) throw ImportException("内容是空的")
-        save(ParsedBook(title.ifBlank { "粘贴的文章" }, author, TxtImporter.splitChapters(text)), kind)
+        save(ParsedBook(title.ifBlank { "粘贴的文章" }, author, TxtImporter.splitChapters(text)), kind, sourceUrl, excerpt, publishedAt)
     }
+
+    suspend fun bySourceUrl(url: String): BookEntity? = dao.bySourceUrl(url)
+
+    /** All chapter text of a book, for whole-book statistics. */
+    suspend fun fullText(bookId: Long): String = withContext(Dispatchers.IO) {
+        bookDir(bookId).listFiles { f -> f.name.endsWith(".txt") }.orEmpty()
+            .sortedBy { it.nameWithoutExtension.toIntOrNull() ?: 0 }
+            .joinToString("\n\n") { it.readText() }
+    }
+
+    /** Cache file for per-book statistics derived from the text. */
+    fun cacheFile(bookId: Long, name: String) = File(bookDir(bookId), name)
 
     suspend fun importSampleIfEmpty() = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences("app", Context.MODE_PRIVATE)
@@ -54,12 +69,14 @@ class BookRepository(private val context: Context, private val db: AppDatabase) 
         prefs.edit().putBoolean("sampleImported", true).apply()
     }
 
-    private suspend fun save(book: ParsedBook, kind: String = BookEntity.KIND_BOOK): Long {
+    private suspend fun save(
+        book: ParsedBook, kind: String = BookEntity.KIND_BOOK, sourceUrl: String = "", excerpt: String = "", publishedAt: Long = 0,
+    ): Long {
         val chapterWords = book.chapters.map { Tokenizer.countWords(it.text) }
         val id = dao.insert(
             BookEntity(
                 title = book.title, author = book.author, chapterCount = book.chapters.size,
-                wordCount = chapterWords.sum(), addedAt = System.currentTimeMillis(), kind = kind,
+                wordCount = chapterWords.sum(), addedAt = System.currentTimeMillis(), kind = kind, sourceUrl = sourceUrl, excerpt = excerpt, publishedAt = publishedAt,
             )
         )
         val dir = bookDir(id).apply { mkdirs() }

@@ -17,14 +17,22 @@ data class BookEntity(
     val lastReadAt: Long = 0,
     val chapterIndex: Int = 0,
     val paragraphIndex: Int = 0,
-    /** [KIND_BOOK] or [KIND_STORY] (an AI review story). */
+    /** [KIND_BOOK], [KIND_STORY] (an AI review story) or [KIND_ARTICLE] (imported from the web). */
     val kind: String = KIND_BOOK,
+    /** Page an article was imported from; empty for books and stories. */
+    val sourceUrl: String = "",
+    /** An article's standfirst (the page's own summary), shown under the headline. */
+    val excerpt: String = "",
+    /** When an article was published (epoch ms), 0 if unknown. */
+    val publishedAt: Long = 0,
 ) {
     val isStory: Boolean get() = kind == KIND_STORY
+    val isArticle: Boolean get() = kind == KIND_ARTICLE
 
     companion object {
         const val KIND_BOOK = "BOOK"
         const val KIND_STORY = "STORY"
+        const val KIND_ARTICLE = "ARTICLE"
     }
 }
 
@@ -94,3 +102,48 @@ data class DailyReadingEntity(
     val words: Int = 0,
     val seconds: Long = 0,
 )
+
+/** A news feed (RSS or Atom) shown on the News tab. */
+@Entity(tableName = "feeds")
+data class FeedEntity(
+    @PrimaryKey val url: String,
+    val title: String,
+    /** Home page, opened in the in-app browser from the feed header. */
+    val site: String = "",
+    val position: Int = 0,
+    val enabled: Boolean = true,
+    val lastFetchedAt: Long = 0,
+    val lastError: String? = null,
+)
+
+@Entity(tableName = "feed_items", indices = [Index("feedUrl"), Index("publishedAt")])
+data class FeedItemEntity(
+    @PrimaryKey val link: String,
+    val feedUrl: String,
+    val title: String,
+    val summary: String,
+    val publishedAt: Long,
+    val fetchedAt: Long,
+)
+
+/**
+ * The difficulty check of a news item: its article was read in the background and its words
+ * counted, so its coverage can be shown before the reader opens it.
+ */
+@Entity(tableName = "article_checks")
+data class ArticleCheckEntity(
+    @PrimaryKey val link: String,
+    /** OK, SHORT (too little text: a paywall, a video or a live page) or FAILED. */
+    val status: String,
+    /** Words of body text found. */
+    val words: Int,
+    /** Dictionary lemmas with their counts, "lemma:count,lemma:count"; names left out. */
+    val lemmas: String,
+    val checkedAt: Long,
+) {
+    companion object {
+        const val OK = "OK"
+        const val SHORT = "SHORT"
+        const val FAILED = "FAILED"
+    }
+}
