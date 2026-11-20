@@ -536,7 +536,10 @@ internal fun tapOffset(l: TextLayoutResult, pos: Offset): Int {
     val input = l.layoutInput
     val em = with(input.density) { input.style.fontSize.toPx() }
     val line = nearestLine(List(l.lineCount) { l.getLineBaseline(it) - em * 0.35f }, pos.y - em * FINGER_BIAS)
-    val y = l.getLineBaseline(line) - em * 0.35f
+    // Ask for the offset in the middle of that line's box, not at its letters: in a paragraph with
+    // the raised initial Android reports each baseline below its own line box, so a point at the
+    // letters would fall into the next line's box again.
+    val y = (l.getLineTop(line) + l.getLineBottom(line)) / 2
     val x = pos.x.coerceIn(l.getLineLeft(line), maxOf(l.getLineLeft(line), l.getLineRight(line) - 1f))
     return l.getOffsetForPosition(Offset(x, y))
 }

@@ -65,4 +65,36 @@ class TapTest {
         // A tap on the next line's letters goes to the next line.
         assertEquals(line + 1, l.getLineForOffset(tapOffset(l, Offset(x, l.getLineBaseline(line + 1) - em * 0.4f))))
     }
+
+    /** The article's opening paragraph starts with a raised initial 2.4 times the size: every line must still hit. */
+    @Test fun ledeWithRaisedInitial() {
+        val text = "Wildlife corridors connect gardens and parks across the city, and volunteers build bug hotels " +
+            "so that insects can move freely between habitats that would otherwise be cut off from each other."
+        var layout: TextLayoutResult? = null
+        rule.activity.setContent {
+            Text(
+                androidx.compose.ui.text.buildAnnotatedString {
+                    append(text)
+                    addStyle(androidx.compose.ui.text.SpanStyle(fontSize = (18 * 2.4f).sp), 0, 1)
+                },
+                style = TextStyle(fontFamily = ReaderSerif, fontSize = 18.sp, lineHeight = (18 * 1.65f).sp),
+                modifier = Modifier.width(320.dp),
+                onTextLayout = { layout = it },
+            )
+        }
+        rule.waitForIdle()
+        val l = layout!!
+        val em = with(l.layoutInput.density) { 18.sp.toPx() }
+        // The bug: baselines lie below their own line boxes here, so the platform's lookup at the letters picks the next line.
+        assert(l.getLineBaseline(0) > l.getLineBottom(0))
+        for (line in 0 until l.lineCount) {
+            val start = l.getLineStart(line) + if (line == 0) 1 else 0
+            val wordEnd = text.indexOf(' ', start)
+            val x = (l.getHorizontalPosition(start, true) + l.getHorizontalPosition(wordEnd, true)) / 2
+            for (dy in listOf(-0.6f, -0.3f, 0f, 0.3f, 0.5f)) {
+                val off = tapOffset(l, Offset(x, l.getLineBaseline(line) + em * dy))
+                assert(off in start..wordEnd) { "line $line dy $dy: tap at $off (line ${l.getLineForOffset(off)}), word at $start..$wordEnd" }
+            }
+        }
+    }
 }
